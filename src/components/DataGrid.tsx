@@ -1,0 +1,281 @@
+import { useState } from 'react';
+import {
+  ArrowUpDown,
+  Search,
+  FileJson,
+  FileSpreadsheet,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
+import type { QueryResult } from '../types/database';
+import { CellInspectorModal } from './CellInspectorModal';
+import { tauriBridge } from '../services/tauriBridge';
+
+interface DataGridProps {
+  result: QueryResult | null;
+  loading: boolean;
+  tableName?: string;
+}
+
+export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
+  const [filterText, setFilterText] = useState('');
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortAsc, setSortAsc] = useState<boolean>(true);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+
+  const [inspectorCell, setInspectorCell] = useState<{ title: string; value: any } | null>(null);
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-500">
+        <div className="w-8 h-8 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
+        <p className="text-xs font-medium">Fetching query data from database...</p>
+      </div>
+    );
+  }
+
+  if (!result || result.rows.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-500">
+        <p className="text-sm font-medium text-slate-400">No data to display</p>
+        <p className="text-xs text-slate-600 mt-1">
+          Execute a query above or click a table in the explorer to view records.
+        </p>
+      </div>
+    );
+  }
+
+  const { columns, rows } = result;
+
+  const filteredRows = rows.filter((r) => {
+    if (!filterText.trim()) return true;
+    const term = filterText.toLowerCase();
+    return Object.values(r).some((val) =>
+      String(val ?? '').toLowerCase().includes(term)
+    );
+  });
+
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    if (!sortCol) return 0;
+    const valA = a[sortCol];
+    const valB = b[sortCol];
+    if (valA === valB) return 0;
+    if (valA === null || valA === undefined) return 1;
+    if (valB === null || valB === undefined) return -1;
+    const cmp = valA > valB ? 1 : -1;
+    return sortAsc ? cmp : -cmp;
+  });
+
+  const totalPages = Math.ceil(sortedRows.length / pageSize) || 1;
+  const paginatedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+
+  const handleSort = (colName: string) => {
+    if (sortCol === colName) {
+      if (sortAsc) setSortAsc(false);
+      else {
+        setSortCol(null);
+        setSortAsc(true);
+      }
+    } else {
+      setSortCol(colName);
+      setSortAsc(true);
+    }
+  };
+
+  const handleExport = async (format: 'csv' | 'json') => {
+    try {
+      const fileName = `${tableName || 'query_export'}_${Date.now()}.${format}`;
+      await tauriBridge.exportData(sortedRows, format, fileName);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message || err}`);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden">
+      <div className="h-10 border-b border-slate-800/80 px-4 flex items-center justify-between bg-slate-900/40 shrink-0">
+        <div className="flex items-center space-x-3">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Filter in results..."
+              value={filterText}
+              onChange={(e) => {
+                setFilterText(e.target.value);
+                setPage(1);
+              }}
+              className="bg-slate-950 border border-slate-800 rounded-md pl-8 pr-2 py-1 text-xs text-slate-200 focus:outline-hidden focus:border-indigo-500 w-44"
+            />
+          </div>
+
+          <span className="text-[11px] text-slate-400 font-mono">
+            Showing {paginatedRows.length} of {sortedRows.length} rows
+          </span>
+        </div>
+
+        <div className="flex items-center space-x-1.5">
+          <button
+            onClick={() => handleExport('csv')}
+            title="Export to CSV"
+            className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-md transition cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+            <span>CSV</span>
+          </button>
+          <button
+            onClick={() => handleExport('json')}
+            title="Export to JSON"
+            className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-md transition cursor-pointer"
+          >
+            <FileJson className="w-3.5 h-3.5 text-amber-400" />
+            <span>JSON</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto bg-slate-950 select-text">
+        <table className="w-full border-collapse text-left font-mono text-xs">
+          <thead className="bg-slate-900/90 sticky top-0 z-10 border-b border-slate-800 select-none">
+            <tr>
+              <th className="w-12 px-3 py-2 text-center text-slate-500 font-normal border-r border-slate-800/80">
+                #
+              </th>
+              {columns.map((col) => (
+                <th
+                  key={col.name}
+                  onClick={() => handleSort(col.name)}
+                  className="px-3.5 py-2 font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer border-r border-slate-800/80 transition"
+                >
+                  <div className="flex items-center justify-between space-x-2">
+                    <div className="flex items-center space-x-1.5">
+                      <span className={col.is_primary_key ? 'text-amber-400 font-bold' : ''}>
+                        {col.name}
+                      </span>
+                      {col.is_primary_key && (
+                        <span className="text-[9px] bg-amber-950 text-amber-400 px-1 py-0.2 rounded border border-amber-900/60 font-sans">
+                          PK
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-1 text-slate-500">
+                      <span className="text-[10px] text-slate-500 font-normal lowercase">
+                        {col.data_type}
+                      </span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                    </div>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/60">
+            {paginatedRows.map((row, rowIdx) => {
+              const actualRowIndex = (page - 1) * pageSize + rowIdx + 1;
+              return (
+                <tr
+                  key={rowIdx}
+                  className="hover:bg-slate-900/70 transition group"
+                >
+                  <td className="px-3 py-1.5 text-center text-slate-600 text-[11px] border-r border-slate-800/60 select-none">
+                    {actualRowIndex}
+                  </td>
+                  {columns.map((col) => {
+                    const cellVal = row[col.name];
+                    const isNull = cellVal === null || cellVal === undefined;
+                    const isObj = typeof cellVal === 'object' && !isNull;
+
+                    return (
+                      <td
+                        key={col.name}
+                        onClick={() =>
+                          setInspectorCell({
+                            title: `${col.name} (Row #${actualRowIndex})`,
+                            value: cellVal,
+                          })
+                        }
+                        className="px-3.5 py-1.5 border-r border-slate-800/60 text-slate-300 max-w-xs truncate cursor-pointer hover:bg-indigo-950/20"
+                        title="Click to inspect full cell value"
+                      >
+                        {isNull ? (
+                          <span className="text-slate-600 italic text-[11px]">NULL</span>
+                        ) : isObj ? (
+                          <span className="text-amber-400 font-medium bg-amber-950/40 px-1.5 py-0.5 rounded text-[10px] border border-amber-900/50">
+                            {Array.isArray(cellVal) ? `Array(${cellVal.length})` : 'JSON Object'}
+                          </span>
+                        ) : typeof cellVal === 'boolean' ? (
+                          <span
+                            className={`px-1 py-0.5 rounded text-[10px] font-semibold ${
+                              cellVal
+                                ? 'bg-emerald-950 text-emerald-400'
+                                : 'bg-rose-950 text-rose-400'
+                            }`}
+                          >
+                            {cellVal ? 'TRUE' : 'FALSE'}
+                          </span>
+                        ) : (
+                          <span>{String(cellVal)}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="h-10 border-t border-slate-800/80 px-4 flex items-center justify-between bg-slate-900/60 text-xs text-slate-400 shrink-0 select-none">
+        <div className="flex items-center space-x-2">
+          <span>Rows per page:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
+            className="bg-slate-950 border border-slate-800 rounded px-2 py-0.5 text-xs text-slate-200 focus:outline-hidden"
+          >
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+          </select>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          <div className="flex items-center space-x-1">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+              className="p-1 rounded hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent text-slate-300 cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage(page + 1)}
+              className="p-1 rounded hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent text-slate-300 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {inspectorCell && (
+        <CellInspectorModal
+          isOpen={true}
+          onClose={() => setInspectorCell(null)}
+          title={inspectorCell.title}
+          value={inspectorCell.value}
+        />
+      )}
+    </div>
+  );
+};

@@ -1,0 +1,54 @@
+[package]
+name = "exagrid"
+version = "0.1.0"
+description = "ExaGrid - Lightweight & Modern Desktop Database Manager"
+authors = ["ExaGrid Team"]
+edition = "2021"
+
+[lib]
+name = "exagrid_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+# Async & Tokio
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+async-trait = "0.1"
+
+# Databases & SQLx
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "uuid",
+    "chrono"
+] }
+mongodb = "3.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging & Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Security & Utilities
+aes-gcm = "0.10"
+rand = "0.8"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+dirs = "5"
+csv = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
