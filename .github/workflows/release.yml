@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-release:
     strategy:
@@ -49,9 +52,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'ExaGrid v__VERSION__'
-          releaseBody: 'See the assets to download the release for your platform.'
-          releaseDraft: true
+          tagName: ${{ github.ref_name }}
+          releaseName: 'ExaGrid ${{ github.ref_name }}'
+          releaseBody: 'See the release assets below to download ExaGrid for your platform (macOS .dmg / Windows .msi & .exe).'
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
