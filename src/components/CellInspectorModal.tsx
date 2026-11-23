@@ -1,5 +1,5 @@
+import { Check,Copy, X } from 'lucide-react';
 import React from 'react';
-import { X, Copy, Check } from 'lucide-react';
 
 interface CellInspectorModalProps {
   isOpen: boolean;

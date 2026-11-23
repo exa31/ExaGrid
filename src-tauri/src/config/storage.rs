@@ -23,25 +23,45 @@ pub struct StoredProfile {
 
 pub struct StorageManager {
     file_path: PathBuf,
+    secondary_path: Option<PathBuf>,
 }
 
 impl StorageManager {
     pub fn new() -> Self {
-        let base_dir = dirs::data_dir()
-            .or_else(|| dirs::home_dir())
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".exagrid");
-        
-        let _ = fs::create_dir_all(&base_dir);
-        let file_path = base_dir.join("connections.json");
-        Self { file_path }
+        let home_exagrid = dirs::home_dir().map(|h| h.join(".exagrid"));
+        let data_exagrid = dirs::data_dir().map(|d| d.join(".exagrid"));
+
+        let primary_dir = home_exagrid.clone().or(data_exagrid.clone()).unwrap_or_else(|| PathBuf::from(".exagrid"));
+        let _ = fs::create_dir_all(&primary_dir);
+        let file_path = primary_dir.join("connections.json");
+
+        let secondary_path = if let Some(d) = data_exagrid {
+            let _ = fs::create_dir_all(&d);
+            let s_file = d.join("connections.json");
+            if !file_path.exists() && s_file.exists() {
+                let _ = fs::copy(&s_file, &file_path);
+            }
+            Some(s_file)
+        } else {
+            None
+        };
+
+        Self { file_path, secondary_path }
     }
 
     pub fn list_profiles(&self) -> Result<Vec<StoredProfile>, AppError> {
-        if !self.file_path.exists() {
+        let path = if self.file_path.exists() {
+            &self.file_path
+        } else if let Some(sec) = &self.secondary_path {
+            if sec.exists() { sec } else { &self.file_path }
+        } else {
+            &self.file_path
+        };
+
+        if !path.exists() {
             return Ok(Vec::new());
         }
-        let data = fs::read_to_string(&self.file_path)?;
+        let data = fs::read_to_string(path)?;
         let profiles: Vec<StoredProfile> = serde_json::from_str(&data).unwrap_or_default();
         Ok(profiles)
     }
@@ -82,7 +102,10 @@ impl StorageManager {
         }
 
         let json = serde_json::to_string_pretty(&profiles)?;
-        fs::write(&self.file_path, json)?;
+        fs::write(&self.file_path, &json)?;
+        if let Some(sec) = &self.secondary_path {
+            let _ = fs::write(sec, &json);
+        }
         Ok(profile)
     }
 
@@ -90,7 +113,10 @@ impl StorageManager {
         let mut profiles = self.list_profiles()?;
         profiles.retain(|p| p.id != id);
         let json = serde_json::to_string_pretty(&profiles)?;
-        fs::write(&self.file_path, json)?;
+        fs::write(&self.file_path, &json)?;
+        if let Some(sec) = &self.secondary_path {
+            let _ = fs::write(sec, &json);
+        }
         Ok(())
     }
 

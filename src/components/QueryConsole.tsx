@@ -1,5 +1,6 @@
-import { useState, useEffect, type KeyboardEvent } from 'react';
-import { Play, RotateCcw, Clock, CheckCircle2, AlertCircle, History, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, History, Play, RotateCcw, Sparkles } from 'lucide-react';
+import { type KeyboardEvent, useState } from 'react';
+
 import type { QueryResult } from '../types/database';
 
 interface QueryConsoleProps {
@@ -20,14 +21,14 @@ export const QueryConsole = ({
   engine = 'postgres',
 }: QueryConsoleProps) => {
   const [query, setQuery] = useState(initialQuery);
+  const [prevInitial, setPrevInitial] = useState(initialQuery);
   const [history, setHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  useEffect(() => {
-    if (initialQuery) {
-      setQuery(initialQuery);
-    }
-  }, [initialQuery]);
+  if (initialQuery !== prevInitial) {
+    setPrevInitial(initialQuery);
+    setQuery(initialQuery);
+  }
 
   const handleRun = async () => {
     if (!query.trim() || loading) return;

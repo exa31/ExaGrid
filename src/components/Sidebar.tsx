@@ -1,5 +1,6 @@
+import { Database, Plus, Power, PowerOff, RefreshCw,Trash2 } from 'lucide-react';
+
 import type { DatabaseEngine, StoredProfile } from '../types/database';
-import { Database, Plus, Trash2, Power, PowerOff, RefreshCw } from 'lucide-react';
 
 interface SidebarProps {
   profiles: StoredProfile[];
@@ -38,8 +39,7 @@ export const Sidebar = ({
   onDeleteProfile,
   onRefresh,
   connectingId,
-}: SidebarProps) => {
-  return (
+}: SidebarProps) => (
     <aside className="w-64 bg-slate-950 border-r border-slate-800/80 flex flex-col h-full select-none shrink-0">
       <div className="h-12 border-b border-slate-800/80 px-4 flex items-center justify-between">
         <div className="flex items-center space-x-2">
@@ -169,4 +169,3 @@ export const Sidebar = ({
       </div>
     </aside>
   );
-};

@@ -1,20 +1,25 @@
-import { useState } from 'react';
 import {
   ArrowUpDown,
-  Search,
-  FileJson,
-  FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
+  FileJson,
+  FileSpreadsheet,
+  Search,
 } from 'lucide-react';
+import { useState } from 'react';
+
+import { tauriBridge } from '../services/tauriBridge';
 import type { QueryResult } from '../types/database';
 import { CellInspectorModal } from './CellInspectorModal';
-import { tauriBridge } from '../services/tauriBridge';
 
 interface DataGridProps {
   result: QueryResult | null;
   loading: boolean;
   tableName?: string;
+}
+
+function generateExportFileName(tableName: string | undefined, format: 'csv' | 'json'): string {
+  return `${tableName || 'query_export'}_${Date.now()}.${format}`;
 }
 
 export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
@@ -85,7 +90,7 @@ export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
 
   const handleExport = async (format: 'csv' | 'json') => {
     try {
-      const fileName = `${tableName || 'query_export'}_${Date.now()}.${format}`;
+      const fileName = generateExportFileName(tableName, format);
       await tauriBridge.exportData(sortedRows, format, fileName);
     } catch (err: any) {
       alert(`Export failed: ${err.message || err}`);
@@ -270,7 +275,7 @@ export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
 
       {inspectorCell && (
         <CellInspectorModal
-          isOpen={true}
+          isOpen
           onClose={() => setInspectorCell(null)}
           title={inspectorCell.title}
           value={inspectorCell.value}

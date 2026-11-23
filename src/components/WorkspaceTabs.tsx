@@ -1,4 +1,5 @@
-import { X, FileCode, Table2, Plus } from 'lucide-react';
+import { FileCode, Plus,Table2, X } from 'lucide-react';
+
 import type { TabItem } from '../types/database';
 
 interface WorkspaceTabsProps {
@@ -15,8 +16,7 @@ export const WorkspaceTabs = ({
   onSelectTab,
   onCloseTab,
   onNewQueryTab,
-}: WorkspaceTabsProps) => {
-  return (
+}: WorkspaceTabsProps) => (
     <div className="h-10 bg-slate-950 border-b border-slate-800/80 flex items-center px-2 space-x-1 overflow-x-auto select-none shrink-0">
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
@@ -60,4 +60,3 @@ export const WorkspaceTabs = ({
       </button>
     </div>
   );
-};

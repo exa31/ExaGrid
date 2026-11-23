@@ -110,8 +110,16 @@ impl SqliteDriver {
                 for col in row.columns() {
                     let col_name = col.name();
                     let val: serde_json::Value = if let Ok(s) = row.try_get::<String, _>(col_name) {
-                        serde_json::Value::String(s)
+                        if (s.starts_with('{') && s.ends_with('}')) || (s.starts_with('[') && s.ends_with(']')) {
+                            serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
+                        } else {
+                            serde_json::Value::String(s)
+                        }
                     } else if let Ok(i) = row.try_get::<i64, _>(col_name) {
+                        serde_json::Value::Number(i.into())
+                    } else if let Ok(u) = row.try_get::<u64, _>(col_name) {
+                        serde_json::Value::Number(u.into())
+                    } else if let Ok(i) = row.try_get::<i32, _>(col_name) {
                         serde_json::Value::Number(i.into())
                     } else if let Ok(f) = row.try_get::<f64, _>(col_name) {
                         if let Some(n) = serde_json::Number::from_f64(f) {

@@ -15,7 +15,7 @@ impl PostgresDriver {
             let user = config.username.as_deref().unwrap_or("postgres");
             let pass = config.password.as_deref().unwrap_or("");
             let db = config.database.as_deref().unwrap_or("postgres");
-            let ssl_mode = if config.ssl.unwrap_or(false) { "require" } else { "prefer" };
+            let ssl_mode = if config.ssl.unwrap_or(false) { "require" } else { "disable" };
             format!("postgres://{}:{}@{}:{}/{}?sslmode={}", user, pass, host, port, db, ssl_mode)
         };
 
@@ -137,10 +137,20 @@ impl PostgresDriver {
                         } else {
                             serde_json::Value::Null
                         }
-                    } else if let Ok(b) = row.try_get::<bool, _>(col_name) {
-                        serde_json::Value::Bool(b)
+                    } else if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(col_name) {
+                        serde_json::Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    } else if let Ok(dt) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col_name) {
+                        serde_json::Value::String(dt.to_rfc3339())
+                    } else if let Ok(d) = row.try_get::<chrono::NaiveDate, _>(col_name) {
+                        serde_json::Value::String(d.format("%Y-%m-%d").to_string())
+                    } else if let Ok(t) = row.try_get::<chrono::NaiveTime, _>(col_name) {
+                        serde_json::Value::String(t.format("%H:%M:%S").to_string())
+                    } else if let Ok(u) = row.try_get::<uuid::Uuid, _>(col_name) {
+                        serde_json::Value::String(u.to_string())
                     } else if let Ok(v) = row.try_get::<serde_json::Value, _>(col_name) {
                         v
+                    } else if let Ok(b) = row.try_get::<bool, _>(col_name) {
+                        serde_json::Value::Bool(b)
                     } else {
                         serde_json::Value::Null
                     };

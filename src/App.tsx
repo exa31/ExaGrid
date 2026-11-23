@@ -1,18 +1,19 @@
-import { useState, useEffect } from 'react';
-import { Zap, ShieldCheck } from 'lucide-react';
-import { Sidebar } from './components/Sidebar';
-import { ObjectExplorer } from './components/ObjectExplorer';
-import { WorkspaceTabs } from './components/WorkspaceTabs';
-import { QueryConsole } from './components/QueryConsole';
-import { DataGrid } from './components/DataGrid';
+import { ShieldCheck,Zap } from 'lucide-react';
+import { useEffect,useState } from 'react';
+
 import { ConnectionModal } from './components/ConnectionModal';
+import { DataGrid } from './components/DataGrid';
+import { ObjectExplorer } from './components/ObjectExplorer';
+import { QueryConsole } from './components/QueryConsole';
+import { Sidebar } from './components/Sidebar';
+import { WorkspaceTabs } from './components/WorkspaceTabs';
+import { tauriBridge } from './services/tauriBridge';
 import type {
   ConnectionConfig,
   StoredProfile,
-  TableMeta,
   TabItem,
+  TableMeta,
 } from './types/database';
-import { tauriBridge } from './services/tauriBridge';
 
 export default function App() {
   const [profiles, setProfiles] = useState<StoredProfile[]>([]);

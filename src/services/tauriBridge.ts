@@ -1,15 +1,12 @@
 import type {
-  ConnectionConfig,
-  StoredProfile,
-  TableMeta,
   ColumnMeta,
+  ConnectionConfig,
+  PingResult,
   QueryResult,
-  PingResult
-} from '../types/database';
+  StoredProfile,
+  TableMeta} from '../types/database';
 
-export const isTauri = (): boolean => {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-};
+export const isTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 async function callTauri<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
   if (isTauri()) {
@@ -108,7 +105,7 @@ async function mockTauriHandler<T>(cmd: string, args: Record<string, any>): Prom
     case 'save_connection': {
       const cfg = args.config as ConnectionConfig;
       const newProf: StoredProfile = {
-        id: cfg.id || 'prof-' + Date.now(),
+        id: cfg.id || `prof-${  Date.now()}`,
         name: cfg.name,
         engine: cfg.engine,
         host: cfg.host,
@@ -164,7 +161,7 @@ async function mockTauriHandler<T>(cmd: string, args: Record<string, any>): Prom
 
       const sampleRows = Array.from({ length: 45 }).map((_, i) => ({
         id: i + 1,
-        name: ['Alex River', 'Sarah Connor', 'Bruce Wayne', 'Diana Prince', 'Arthur Dent'][i % 5] + ` #${i + 1}`,
+        name: `${['Alex River', 'Sarah Connor', 'Bruce Wayne', 'Diana Prince', 'Arthur Dent'][i % 5]  } #${i + 1}`,
         email: `user${i + 1}@example.com`,
         role: ['admin', 'developer', 'analyst', 'manager'][i % 4],
         preferences: { theme: i % 2 === 0 ? 'dark' : 'light', notifications: true, lang: 'id-ID' },

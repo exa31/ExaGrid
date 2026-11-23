@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from 'react';
-import { X, Server, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import type { ConnectionConfig, DatabaseEngine, PingResult } from '../types/database';
+import { AlertCircle, CheckCircle2, Loader2,Server, X } from 'lucide-react';
+import { type FormEvent,useState } from 'react';
+
 import { tauriBridge } from '../services/tauriBridge';
+import type { ConnectionConfig, DatabaseEngine, PingResult } from '../types/database';
 
 interface ConnectionModalProps {
   isOpen: boolean;

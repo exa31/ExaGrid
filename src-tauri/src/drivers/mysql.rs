@@ -48,16 +48,16 @@ impl MySqlDriver {
     pub async fn list_tables(pool: &MySqlPool, current_db: Option<&str>) -> Result<Vec<TableMeta>, AppError> {
         let sql = if let Some(db) = current_db {
             format!(
-                "SELECT table_name, table_type, table_rows 
+                "SELECT CAST(TABLE_NAME AS CHAR) AS table_name, CAST(TABLE_TYPE AS CHAR) AS table_type, TABLE_ROWS AS table_rows 
                  FROM information_schema.tables 
                  WHERE table_schema = '{}' 
                  ORDER BY table_name",
                 db.replace('\'', "''")
             )
         } else {
-            "SELECT table_name, table_type, table_rows 
+            "SELECT CAST(TABLE_NAME AS CHAR) AS table_name, CAST(TABLE_TYPE AS CHAR) AS table_type, TABLE_ROWS AS table_rows 
              FROM information_schema.tables 
-             WHERE table_schema = DATABASE() 
+             WHERE table_schema = DATABASE() OR (DATABASE() IS NULL AND table_schema NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys'))
              ORDER BY table_name"
                 .to_string()
         };
@@ -69,9 +69,15 @@ impl MySqlDriver {
 
         let mut tables = Vec::new();
         for row in rows {
-            let name: String = row.try_get("table_name").unwrap_or_default();
-            let t_type: String = row.try_get("table_type").unwrap_or_else(|_| "BASE TABLE".into());
-            let count: Option<i64> = row.try_get("table_rows").ok();
+            let name: String = row.try_get::<String, _>("table_name")
+                .or_else(|_| row.try_get::<Vec<u8>, _>("table_name").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_default();
+            let t_type: String = row.try_get::<String, _>("table_type")
+                .or_else(|_| row.try_get::<Vec<u8>, _>("table_type").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_else(|_| "BASE TABLE".into());
+            let count: Option<i64> = row.try_get::<i64, _>("table_rows")
+                .or_else(|_| row.try_get::<i32, _>("table_rows").map(|i| i as i64))
+                .ok();
             tables.push(TableMeta {
                 name,
                 schema: current_db.map(|s| s.to_string()),
@@ -83,23 +89,48 @@ impl MySqlDriver {
     }
 
     pub async fn get_columns(pool: &MySqlPool, table: &str) -> Result<Vec<ColumnMeta>, AppError> {
-        let rows = sqlx::query(
-            "SELECT column_name, data_type, is_nullable, column_key 
+        let (schema, table_clean) = if let Some((s, t)) = table.split_once('.') {
+            (Some(s), t)
+        } else {
+            (None, table)
+        };
+
+        let sql = if let Some(s) = schema {
+            format!(
+                "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(DATA_TYPE AS CHAR) AS data_type, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(COLUMN_KEY AS CHAR) AS column_key 
+                 FROM information_schema.columns 
+                 WHERE table_schema = '{}' AND table_name = ? 
+                 ORDER BY ordinal_position",
+                s.replace('\'', "''")
+            )
+        } else {
+            "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(DATA_TYPE AS CHAR) AS data_type, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(COLUMN_KEY AS CHAR) AS column_key 
              FROM information_schema.columns 
-             WHERE table_name = ? AND table_schema = DATABASE() 
+             WHERE table_name = ? AND (table_schema = DATABASE() OR DATABASE() IS NULL OR table_schema NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')) 
              ORDER BY ordinal_position"
-        )
-        .bind(table)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+                .to_string()
+        };
+
+        let rows = sqlx::query(&sql)
+            .bind(table_clean)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut columns = Vec::new();
         for row in rows {
-            let name: String = row.try_get("column_name").unwrap_or_default();
-            let data_type: String = row.try_get("data_type").unwrap_or_else(|_| "varchar".into());
-            let is_nullable: String = row.try_get("is_nullable").unwrap_or_else(|_| "YES".into());
-            let key: String = row.try_get("column_key").unwrap_or_default();
+            let name: String = row.try_get::<String, _>("column_name")
+                .or_else(|_| row.try_get::<Vec<u8>, _>("column_name").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_default();
+            let data_type: String = row.try_get::<String, _>("data_type")
+                .or_else(|_| row.try_get::<Vec<u8>, _>("data_type").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_else(|_| "varchar".into());
+            let is_nullable: String = row.try_get::<String, _>("is_nullable")
+                .or_else(|_| row.try_get::<Vec<u8>, _>("is_nullable").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_else(|_| "YES".into());
+            let key: String = row.try_get::<String, _>("column_key")
+                .or_else(|_| row.try_get::<Vec<u8>, _>("column_key").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_default();
 
             columns.push(ColumnMeta {
                 name,
@@ -143,17 +174,33 @@ impl MySqlDriver {
                 for col in row.columns() {
                     let col_name = col.name();
                     let val: serde_json::Value = if let Ok(s) = row.try_get::<String, _>(col_name) {
-                        serde_json::Value::String(s)
+                        if (s.starts_with('{') && s.ends_with('}')) || (s.starts_with('[') && s.ends_with(']')) {
+                            serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
+                        } else {
+                            serde_json::Value::String(s)
+                        }
                     } else if let Ok(i) = row.try_get::<i64, _>(col_name) {
                         serde_json::Value::Number(i.into())
+                    } else if let Ok(u) = row.try_get::<u64, _>(col_name) {
+                        serde_json::Value::Number(u.into())
                     } else if let Ok(i) = row.try_get::<i32, _>(col_name) {
                         serde_json::Value::Number(i.into())
+                    } else if let Ok(u) = row.try_get::<u32, _>(col_name) {
+                        serde_json::Value::Number(u.into())
                     } else if let Ok(f) = row.try_get::<f64, _>(col_name) {
                         if let Some(n) = serde_json::Number::from_f64(f) {
                             serde_json::Value::Number(n)
                         } else {
                             serde_json::Value::Null
                         }
+                    } else if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(col_name) {
+                        serde_json::Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    } else if let Ok(dt) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col_name) {
+                        serde_json::Value::String(dt.to_rfc3339())
+                    } else if let Ok(d) = row.try_get::<chrono::NaiveDate, _>(col_name) {
+                        serde_json::Value::String(d.format("%Y-%m-%d").to_string())
+                    } else if let Ok(t) = row.try_get::<chrono::NaiveTime, _>(col_name) {
+                        serde_json::Value::String(t.format("%H:%M:%S").to_string())
                     } else if let Ok(b) = row.try_get::<bool, _>(col_name) {
                         serde_json::Value::Bool(b)
                     } else {

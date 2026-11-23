@@ -1,14 +1,15 @@
-import { useState } from 'react';
 import {
-  Table2,
-  FileCode,
-  Search,
-  ChevronRight,
   ChevronDown,
+  ChevronRight,
+  FileCode,
+  FolderTree,
   Layers,
   RefreshCw,
-  FolderTree,
+  Search,
+  Table2,
 } from 'lucide-react';
+import { useState } from 'react';
+
 import type { TableMeta } from '../types/database';
 
 interface ObjectExplorerProps {

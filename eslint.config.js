@@ -9,7 +9,7 @@ import unusedImports from 'eslint-plugin-unused-imports'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  { ignores: ['dist', 'src-tauri/**'] },
   {
     extends: [eslint.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
@@ -91,13 +91,15 @@ export default tseslint.config(
       '@typescript-eslint/naming-convention': [
         'error',
         { selector: 'default', format: ['camelCase'] },
-        { selector: 'variable', format: ['camelCase', 'UPPER_CASE'] },
+        { selector: 'variable', format: ['camelCase', 'UPPER_CASE', 'PascalCase'] },
         { selector: 'function', format: ['camelCase', 'PascalCase'] },
         { selector: 'typeLike', format: ['PascalCase'] },
         { selector: 'enumMember', format: ['UPPER_CASE'] },
         { selector: 'import', format: ['PascalCase', 'camelCase'] },
         { selector: 'variable', modifiers: ['destructured'], format: null },
         { selector: 'objectLiteralProperty', format: null },
+        { selector: 'typeProperty', format: null },
+        { selector: 'parameter', format: ['camelCase', 'PascalCase'], leadingUnderscore: 'allow' },
       ],
     },
   },
