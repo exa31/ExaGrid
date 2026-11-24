@@ -2,8 +2,11 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Eye,
   FileJson,
   FileSpreadsheet,
+  Pencil,
   PlusCircle,
   Search,
   Trash2,
@@ -13,6 +16,7 @@ import { useState } from 'react';
 import { tauriBridge } from '../services/tauriBridge';
 import type { QueryResult } from '../types/database';
 import { CellInspectorModal } from './CellInspectorModal';
+import { ContextMenu, type ContextMenuSection } from './ContextMenu';
 
 interface DataGridProps {
   result: QueryResult | null;
@@ -44,6 +48,12 @@ export const DataGrid = ({
     rowIdx: number;
     colName: string;
     value: string;
+  } | null>(null);
+
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    sections: ContextMenuSection[];
   } | null>(null);
 
   const [inspectorCell, setInspectorCell] = useState<{ title: string; value: any } | null>(null);
@@ -121,6 +131,108 @@ export const DataGrid = ({
     } catch (err: any) {
       alert(`Export failed: ${err.message || err}`);
     }
+  };
+
+  const openCellContextMenu = (
+    e: React.MouseEvent,
+    row: Record<string, any>,
+    rowIdx: number,
+    colName: string,
+    cellVal: any
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const sections: ContextMenuSection[] = [
+      {
+        header: `Cell: ${colName}`,
+        items: [
+          {
+            label: 'Copy Cell Value',
+            icon: <Copy className="w-3.5 h-3.5 text-sky-400" />,
+            onClick: () => {
+              navigator.clipboard.writeText(
+                cellVal === null || cellVal === undefined ? '' : String(cellVal)
+              );
+            },
+          },
+          ...(onUpdateCell && !columns.find((c) => c.name === colName)?.is_primary_key
+            ? [
+                {
+                  label: 'Edit Cell Inline',
+                  icon: <Pencil className="w-3.5 h-3.5 text-indigo-400" />,
+                  onClick: () => {
+                    setEditingCell({
+                      rowIdx,
+                      colName,
+                      value:
+                        cellVal === null || cellVal === undefined ? '' : String(cellVal),
+                    });
+                  },
+                },
+              ]
+            : []),
+          {
+            label: 'Inspect Full Value',
+            icon: <Eye className="w-3.5 h-3.5 text-amber-400" />,
+            onClick: () => {
+              setInspectorCell({
+                title: `${colName} (Row #${(page - 1) * pageSize + rowIdx + 1})`,
+                value: cellVal,
+              });
+            },
+          },
+        ],
+      },
+      {
+        header: 'Row Actions',
+        items: [
+          {
+            label: 'Copy Row as JSON',
+            icon: <FileJson className="w-3.5 h-3.5 text-emerald-400" />,
+            onClick: () => {
+              navigator.clipboard.writeText(JSON.stringify(row, null, 2));
+            },
+          },
+          ...(onOpenInsertRow
+            ? [
+                {
+                  label: 'Insert New Row...',
+                  icon: <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />,
+                  onClick: onOpenInsertRow,
+                },
+              ]
+            : []),
+          ...(onDeleteRow
+            ? [
+                {
+                  label: 'Delete This Row',
+                  icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+                  danger: true,
+                  onClick: () => onDeleteRow(row),
+                },
+              ]
+            : []),
+        ],
+      },
+      {
+        header: 'Data Export',
+        items: [
+          {
+            label: 'Export to CSV',
+            icon: <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />,
+            onClick: () => handleExport('csv'),
+          },
+          {
+            label: 'Export to JSON',
+            icon: <FileJson className="w-3.5 h-3.5 text-amber-400" />,
+            onClick: () => handleExport('json'),
+          },
+        ],
+      },
+    ];
+
+    setContextMenu({ x: e.clientX, y: e.clientY, sections });
   };
 
   return (
@@ -259,6 +371,9 @@ export const DataGrid = ({
                       return (
                         <td
                           key={col.name}
+                          onContextMenu={(e) =>
+                            openCellContextMenu(e, row, rowIdx, col.name, cellVal)
+                          }
                           onDoubleClick={() => {
                             if (onUpdateCell && !col.is_primary_key) {
                               setEditingCell({
@@ -407,6 +522,15 @@ export const DataGrid = ({
           onClose={() => setInspectorCell(null)}
           title={inspectorCell.title}
           value={inspectorCell.value}
+        />
+      )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          sections={contextMenu.sections}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </div>

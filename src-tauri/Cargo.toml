@@ -1,6 +1,6 @@
 [package]
 name = "exagrid"
-version = "0.1.6"
+version = "0.1.7"
 description = "ExaGrid - Lightweight & Modern Desktop Database Manager"
 authors = ["ExaGrid Team"]
 edition = "2021"

@@ -22,6 +22,7 @@ import type {
   QueryResult,
   TableTabSubView,
 } from '../types/database';
+import { ContextMenu, type ContextMenuSection } from './ContextMenu';
 import { DataGrid } from './DataGrid';
 
 interface TableStructureViewProps {
@@ -68,6 +69,11 @@ export const TableStructureView = ({
   onOpenInSqlEditor,
 }: TableStructureViewProps) => {
   const [copied, setCopied] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    sections: ContextMenuSection[];
+  } | null>(null);
 
   const handleCopyDdl = () => {
     if (!ddl) return;
@@ -240,7 +246,45 @@ export const TableStructureView = ({
                     </tr>
                   ) : (
                     columns.map((col, idx) => (
-                      <tr key={col.name} className="hover:bg-slate-800/40 transition">
+                      <tr
+                        key={col.name}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setContextMenu({
+                            x: e.clientX,
+                            y: e.clientY,
+                            sections: [
+                              {
+                                header: `Column: ${col.name}`,
+                                items: [
+                                  {
+                                    label: 'Edit Column...',
+                                    icon: <Pencil className="w-3.5 h-3.5 text-indigo-400" />,
+                                    onClick: () => onOpenEditColumn(col),
+                                  },
+                                  {
+                                    label: 'Add New Column...',
+                                    icon: <Plus className="w-3.5 h-3.5 text-slate-400" />,
+                                    onClick: onOpenAddColumn,
+                                  },
+                                  ...(!col.is_primary_key
+                                    ? [
+                                        {
+                                          label: 'Drop Column',
+                                          icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+                                          danger: true,
+                                          onClick: () => onDropColumn(col.name),
+                                        },
+                                      ]
+                                    : []),
+                                ],
+                              },
+                            ],
+                          });
+                        }}
+                        className="hover:bg-slate-800/40 transition cursor-context-menu"
+                      >
                         <td className="py-2.5 px-4 text-center text-slate-500 font-mono text-[11px]">
                           {idx + 1}
                         </td>
@@ -324,7 +368,40 @@ export const TableStructureView = ({
                     </tr>
                   ) : (
                     indexes.map((idx, i) => (
-                      <tr key={idx.name} className="hover:bg-slate-800/40 transition">
+                      <tr
+                        key={idx.name}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setContextMenu({
+                            x: e.clientX,
+                            y: e.clientY,
+                            sections: [
+                              {
+                                header: `Index: ${idx.name}`,
+                                items: [
+                                  {
+                                    label: 'Add New Index...',
+                                    icon: <Plus className="w-3.5 h-3.5 text-amber-400" />,
+                                    onClick: onOpenAddIndex,
+                                  },
+                                  ...(!idx.is_primary
+                                    ? [
+                                        {
+                                          label: 'Drop Index',
+                                          icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+                                          danger: true,
+                                          onClick: () => onDropIndex(idx.name),
+                                        },
+                                      ]
+                                    : []),
+                                ],
+                              },
+                            ],
+                          });
+                        }}
+                        className="hover:bg-slate-800/40 transition cursor-context-menu"
+                      >
                         <td className="py-2.5 px-4 text-center text-slate-500 font-mono text-[11px]">
                           {i + 1}
                         </td>
@@ -392,6 +469,15 @@ export const TableStructureView = ({
           </div>
         )}
       </div>
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          sections={contextMenu.sections}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 };

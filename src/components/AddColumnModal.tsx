@@ -97,7 +97,7 @@ export const AddColumnModal = ({
               placeholder="e.g. phone_number, is_verified"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
+              className="w-full h-9 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
             />
           </div>
 
@@ -107,7 +107,7 @@ export const AddColumnModal = ({
               <select
                 value={dataType}
                 onChange={(e) => setDataType(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
+                className="w-full h-9 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono cursor-pointer"
               >
                 {COMMON_DATA_TYPES.map((t) => (
                   <option key={t} value={t}>
@@ -126,7 +126,7 @@ export const AddColumnModal = ({
                 placeholder="e.g. 255 or 10,2"
                 value={lengthOrPrecision}
                 onChange={(e) => setLengthOrPrecision(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
+                className="w-full h-9 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
               />
             </div>
           </div>
@@ -138,7 +138,7 @@ export const AddColumnModal = ({
               placeholder="e.g. 'active', 0, CURRENT_TIMESTAMP"
               value={defaultValue}
               onChange={(e) => setDefaultValue(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
+              className="w-full h-9 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-hidden focus:border-indigo-500 font-mono"
             />
           </div>
 

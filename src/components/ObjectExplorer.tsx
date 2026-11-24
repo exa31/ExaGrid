@@ -17,7 +17,7 @@ import {
   Table2,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { tauriBridge } from '../services/tauriBridge';
 import type {
@@ -27,6 +27,7 @@ import type {
   TableMeta,
   TableTabSubView,
 } from '../types/database';
+import { ContextMenu, type ContextMenuSection } from './ContextMenu';
 
 interface ObjectExplorerProps {
   activeProfileName: string | null;
@@ -77,18 +78,13 @@ export const ObjectExplorer = ({
   const [tableDetails, setTableDetails] = useState<
     Record<string, { columns: ColumnMeta[]; indexes: IndexMeta[]; loading: boolean }>
   >({});
-  const [activeMenuTable, setActiveMenuTable] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setActiveMenuTable(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  // Unified floating context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    sections: ContextMenuSection[];
+  } | null>(null);
 
   const handleToggleTableExpand = async (tableName: string) => {
     const isNowExpanded = !expandedTables[tableName];
@@ -115,6 +111,214 @@ export const ObjectExplorer = ({
         }));
       }
     }
+  };
+
+  const openTableContextMenu = (x: number, y: number, tableName: string) => {
+    const sections: ContextMenuSection[] = [
+      {
+        header: `Table: ${tableName}`,
+        items: [
+          {
+            label: 'View Data',
+            icon: <Table2 className="w-3.5 h-3.5 text-sky-400" />,
+            onClick: () => onSelectTable(tableName, 'data'),
+          },
+          {
+            label: 'View Structure & Columns',
+            icon: <Layers className="w-3.5 h-3.5 text-indigo-400" />,
+            onClick: () => onSelectTable(tableName, 'structure'),
+          },
+          {
+            label: 'View DDL Script',
+            icon: <Code2 className="w-3.5 h-3.5 text-emerald-400" />,
+            onClick: () => onSelectTable(tableName, 'ddl'),
+          },
+        ],
+      },
+      {
+        header: 'Operations',
+        items: [
+          ...(onOpenAddColumnForTable
+            ? [
+                {
+                  label: 'Add Column...',
+                  icon: <Plus className="w-3.5 h-3.5 text-indigo-400" />,
+                  onClick: () => onOpenAddColumnForTable(tableName),
+                },
+              ]
+            : []),
+          ...(onOpenAddIndexForTable
+            ? [
+                {
+                  label: 'Add Index...',
+                  icon: <KeyRound className="w-3.5 h-3.5 text-amber-400" />,
+                  onClick: () => onOpenAddIndexForTable(tableName),
+                },
+              ]
+            : []),
+          ...(onOpenInsertRowForTable
+            ? [
+                {
+                  label: 'Insert Row...',
+                  icon: <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />,
+                  onClick: () => onOpenInsertRowForTable(tableName),
+                },
+              ]
+            : []),
+        ],
+      },
+      {
+        header: 'Generate SQL',
+        items: [
+          {
+            label: `SELECT * FROM ${tableName}`,
+            icon: <FileCode className="w-3.5 h-3.5 text-slate-400" />,
+            onClick: () => onGenerateSql(tauriBridge.generateSelectSnippet(engine, tableName)),
+          },
+          {
+            label: 'INSERT Statement',
+            icon: <FileCode className="w-3.5 h-3.5 text-slate-400" />,
+            onClick: () => onGenerateSql(`INSERT INTO ${tableName} VALUES (...);`),
+          },
+        ],
+      },
+      {
+        items: [
+          {
+            label: 'Truncate Table',
+            icon: <RefreshCw className="w-3.5 h-3.5 text-amber-400" />,
+            danger: true,
+            onClick: () => onTruncateTable(tableName),
+          },
+          {
+            label: 'Drop Table',
+            icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+            danger: true,
+            onClick: () => onDropTable(tableName),
+          },
+        ],
+      },
+    ];
+
+    setContextMenu({ x, y, sections });
+  };
+
+  const openDatabaseContextMenu = (x: number, y: number) => {
+    const sections: ContextMenuSection[] = [
+      {
+        header: `Database: ${databaseName || 'default'}`,
+        items: [
+          {
+            label: 'Create New Table...',
+            icon: <Plus className="w-3.5 h-3.5 text-emerald-400" />,
+            onClick: onOpenCreateTable,
+          },
+          {
+            label: 'New SQL Console',
+            icon: <FileCode className="w-3.5 h-3.5 text-indigo-400" />,
+            onClick: onOpenNewQuery,
+          },
+          {
+            label: 'Refresh Tables & Schema',
+            icon: <RefreshCw className="w-3.5 h-3.5 text-slate-400" />,
+            onClick: onRefreshTables,
+          },
+        ],
+      },
+    ];
+
+    setContextMenu({ x, y, sections });
+  };
+
+  const openColumnContextMenu = (
+    x: number,
+    y: number,
+    tableName: string,
+    col: ColumnMeta
+  ) => {
+    const sections: ContextMenuSection[] = [
+      {
+        header: `Column: ${col.name} (${col.data_type})`,
+        items: [
+          ...(onOpenEditColumnForTable
+            ? [
+                {
+                  label: 'Edit Column...',
+                  icon: <Pencil className="w-3.5 h-3.5 text-indigo-400" />,
+                  onClick: () => onOpenEditColumnForTable(tableName, col),
+                },
+              ]
+            : []),
+          ...(onOpenAddColumnForTable
+            ? [
+                {
+                  label: 'Add Another Column...',
+                  icon: <Plus className="w-3.5 h-3.5 text-slate-400" />,
+                  onClick: () => onOpenAddColumnForTable(tableName),
+                },
+              ]
+            : []),
+          {
+            label: 'View in Structure View',
+            icon: <Layers className="w-3.5 h-3.5 text-sky-400" />,
+            onClick: () => onSelectTable(tableName, 'structure'),
+          },
+          ...(onDropColumnForTable && !col.is_primary_key
+            ? [
+                {
+                  label: 'Drop Column',
+                  icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+                  danger: true,
+                  onClick: () => onDropColumnForTable(tableName, col.name),
+                },
+              ]
+            : []),
+        ],
+      },
+    ];
+
+    setContextMenu({ x, y, sections });
+  };
+
+  const openIndexContextMenu = (
+    x: number,
+    y: number,
+    tableName: string,
+    indexName: string
+  ) => {
+    const sections: ContextMenuSection[] = [
+      {
+        header: `Index: ${indexName}`,
+        items: [
+          ...(onOpenAddIndexForTable
+            ? [
+                {
+                  label: 'Add New Index...',
+                  icon: <Plus className="w-3.5 h-3.5 text-amber-400" />,
+                  onClick: () => onOpenAddIndexForTable(tableName),
+                },
+              ]
+            : []),
+          {
+            label: 'View Indexes Tab',
+            icon: <KeyRound className="w-3.5 h-3.5 text-amber-400" />,
+            onClick: () => onSelectTable(tableName, 'indexes'),
+          },
+          ...(onDropIndexForTable
+            ? [
+                {
+                  label: 'Drop Index',
+                  icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+                  danger: true,
+                  onClick: () => onDropIndexForTable(tableName, indexName),
+                },
+              ]
+            : []),
+        ],
+      },
+    ];
+
+    setContextMenu({ x, y, sections });
   };
 
   const filteredTables = tables.filter((t) =>
@@ -173,7 +377,14 @@ export const ObjectExplorer = ({
       {/* Explorer Tree */}
       <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
         <div>
-          <div className="flex items-center justify-between px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-900 rounded-md cursor-pointer transition group">
+          <div
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openDatabaseContextMenu(e.clientX, e.clientY);
+            }}
+            className="flex items-center justify-between px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-900 rounded-md cursor-pointer transition group"
+          >
             <div
               onClick={() => setExpanded(!expanded)}
               className="flex items-center space-x-1.5 flex-1 truncate"
@@ -225,7 +436,7 @@ export const ObjectExplorer = ({
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          setActiveMenuTable(t.name);
+                          openTableContextMenu(e.clientX, e.clientY, t.name);
                         }}
                         className="group flex items-center justify-between px-2 py-1 rounded-md text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-900 cursor-pointer transition relative"
                       >
@@ -271,141 +482,14 @@ export const ObjectExplorer = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setActiveMenuTable(activeMenuTable === t.name ? null : t.name);
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              openTableContextMenu(rect.right, rect.bottom, t.name);
                             }}
                             className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition"
                           >
                             <MoreVertical className="w-3.5 h-3.5" />
                           </button>
                         </div>
-
-                        {/* Context Popup Menu */}
-                        {activeMenuTable === t.name && (
-                          <div
-                            ref={menuRef}
-                            className="absolute right-2 top-7 z-50 w-52 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl py-1 text-xs text-slate-200 animate-in fade-in zoom-in-95 duration-100"
-                          >
-                            <button
-                              onClick={() => {
-                                onSelectTable(t.name, 'data');
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-slate-800 flex items-center space-x-2"
-                            >
-                              <Table2 className="w-3.5 h-3.5 text-sky-400" />
-                              <span>View Data</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                onSelectTable(t.name, 'structure');
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-slate-800 flex items-center space-x-2"
-                            >
-                              <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                              <span>View Structure & Types</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                onSelectTable(t.name, 'ddl');
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-slate-800 flex items-center space-x-2"
-                            >
-                              <Code2 className="w-3.5 h-3.5 text-emerald-400" />
-                              <span>View DDL Script</span>
-                            </button>
-
-                            <div className="border-t border-slate-800 my-1" />
-
-                            <div className="px-3 py-1 text-[10px] uppercase font-semibold text-slate-500">
-                              Table Operations
-                            </div>
-                            {onOpenAddColumnForTable && (
-                              <button
-                                onClick={() => {
-                                  onOpenAddColumnForTable(t.name);
-                                  setActiveMenuTable(null);
-                                }}
-                                className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-indigo-400 flex items-center space-x-2"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Add Column...</span>
-                              </button>
-                            )}
-                            {onOpenAddIndexForTable && (
-                              <button
-                                onClick={() => {
-                                  onOpenAddIndexForTable(t.name);
-                                  setActiveMenuTable(null);
-                                }}
-                                className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-amber-400 flex items-center space-x-2"
-                              >
-                                <KeyRound className="w-3.5 h-3.5" />
-                                <span>Add Index...</span>
-                              </button>
-                            )}
-                            {onOpenInsertRowForTable && (
-                              <button
-                                onClick={() => {
-                                  onOpenInsertRowForTable(t.name);
-                                  setActiveMenuTable(null);
-                                }}
-                                className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-emerald-400 flex items-center space-x-2"
-                              >
-                                <PlusCircle className="w-3.5 h-3.5" />
-                                <span>Insert Row...</span>
-                              </button>
-                            )}
-
-                            <div className="border-t border-slate-800 my-1" />
-
-                            <div className="px-3 py-1 text-[10px] uppercase font-semibold text-slate-500">
-                              Generate SQL
-                            </div>
-                            <button
-                              onClick={() => {
-                                onGenerateSql(tauriBridge.generateSelectSnippet(engine, t.name));
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1 hover:bg-slate-800 text-slate-300 font-mono text-[11px]"
-                            >
-                              SELECT * FROM {t.name}
-                            </button>
-                            <button
-                              onClick={() => {
-                                onGenerateSql(`INSERT INTO ${t.name} VALUES (...);`);
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1 hover:bg-slate-800 text-slate-300 font-mono text-[11px]"
-                            >
-                              INSERT Statement
-                            </button>
-
-                            <div className="border-t border-slate-800 my-1" />
-
-                            <button
-                              onClick={() => {
-                                onTruncateTable(t.name);
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-amber-950/40 text-amber-400 flex items-center space-x-2"
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                              <span>Truncate Table</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                onDropTable(t.name);
-                                setActiveMenuTable(null);
-                              }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-rose-950/40 text-rose-400 flex items-center space-x-2"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Drop Table</span>
-                            </button>
-                          </div>
-                        )}
                       </div>
 
                       {/* Expanded Table Node: Columns & Indexes */}
@@ -419,7 +503,14 @@ export const ObjectExplorer = ({
                             <>
                               {/* Columns Node */}
                               <div>
-                                <div className="flex items-center justify-between text-slate-400 hover:text-slate-200 group/sub py-0.5">
+                                <div
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onOpenAddColumnForTable?.(t.name);
+                                  }}
+                                  className="flex items-center justify-between text-slate-400 hover:text-slate-200 group/sub py-0.5"
+                                >
                                   <div
                                     onClick={() => onSelectTable(t.name, 'structure')}
                                     className="flex items-center space-x-1.5 cursor-pointer font-medium"
@@ -448,7 +539,7 @@ export const ObjectExplorer = ({
                                       onContextMenu={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        onOpenEditColumnForTable?.(t.name, col);
+                                        openColumnContextMenu(e.clientX, e.clientY, t.name, col);
                                       }}
                                       className="group/col flex items-center justify-between py-0.5 text-slate-400 hover:text-slate-200 cursor-pointer font-mono"
                                     >
@@ -506,7 +597,14 @@ export const ObjectExplorer = ({
 
                               {/* Indexes Node */}
                               <div className="pt-0.5">
-                                <div className="flex items-center justify-between text-slate-400 hover:text-slate-200 group/sub py-0.5">
+                                <div
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onOpenAddIndexForTable?.(t.name);
+                                  }}
+                                  className="flex items-center justify-between text-slate-400 hover:text-slate-200 group/sub py-0.5"
+                                >
                                   <div
                                     onClick={() => onSelectTable(t.name, 'indexes')}
                                     className="flex items-center space-x-1.5 cursor-pointer font-medium"
@@ -532,6 +630,11 @@ export const ObjectExplorer = ({
                                     <div
                                       key={idx.name}
                                       onClick={() => onSelectTable(t.name, 'indexes')}
+                                      onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        openIndexContextMenu(e.clientX, e.clientY, t.name, idx.name);
+                                      }}
                                       className="group/idx flex items-center justify-between py-0.5 text-slate-400 hover:text-slate-200 cursor-pointer font-mono"
                                     >
                                       <span className="truncate">{idx.name}</span>
@@ -573,6 +676,16 @@ export const ObjectExplorer = ({
           )}
         </div>
       </div>
+
+      {/* Render Portal/Fixed Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          sections={contextMenu.sections}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 };
