@@ -6,6 +6,8 @@ import {
   PlusCircle,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
+  Upload,
   Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -13,13 +15,16 @@ import { useEffect, useState } from 'react';
 import { AddColumnModal } from './components/AddColumnModal';
 import { AddForeignKeyModal } from './components/AddForeignKeyModal';
 import { AddIndexModal } from './components/AddIndexModal';
+import { CloneTableModal } from './components/CloneTableModal';
 import { ConnectionModal } from './components/ConnectionModal';
 import { DataGrid } from './components/DataGrid';
+import { DataImportModal } from './components/DataImportModal';
 import { EditColumnModal } from './components/EditColumnModal';
 import { InsertRowModal } from './components/InsertRowModal';
 import { ObjectExplorer } from './components/ObjectExplorer';
 import { ProcessListModal } from './components/ProcessListModal';
 import { QueryConsole } from './components/QueryConsole';
+import { ServerVariablesModal } from './components/ServerVariablesModal';
 import { Sidebar } from './components/Sidebar';
 import { TableDesignerModal } from './components/TableDesignerModal';
 import { TableStructureView } from './components/TableStructureView';
@@ -70,6 +75,9 @@ export default function App() {
   const [isAddIndexOpen, setIsAddIndexOpen] = useState(false);
   const [isAddForeignKeyOpen, setIsAddForeignKeyOpen] = useState(false);
   const [isProcessListOpen, setIsProcessListOpen] = useState(false);
+  const [isCloneTableOpen, setIsCloneTableOpen] = useState(false);
+  const [isImportDataOpen, setIsImportDataOpen] = useState(false);
+  const [isServerVariablesOpen, setIsServerVariablesOpen] = useState(false);
   const [isInsertRowOpen, setIsInsertRowOpen] = useState(false);
   const [targetTableForModal, setTargetTableForModal] = useState<string>('');
 
@@ -172,7 +180,7 @@ export default function App() {
 
     if (connectedProfileId) {
       try {
-        const [queryRes, colsRes, idxRes, ddlRes, fksRes] = await Promise.allSettled([
+        const [queryRes, colsRes, idxRes, ddlRes, fksRes, statsRes] = await Promise.allSettled([
           tauriBridge.executeQuery(
             connectedProfileId,
             initialQuery,
@@ -184,6 +192,7 @@ export default function App() {
           tauriBridge.getTableIndexes(connectedProfileId, tableName),
           tauriBridge.getTableDdl(connectedProfileId, tableName),
           tauriBridge.getTableForeignKeys(connectedProfileId, tableName, engine, connectedProfile?.database),
+          tauriBridge.getTableStats(connectedProfileId, tableName, engine, connectedProfile?.database),
         ]);
 
         setTabs((prev) =>
@@ -195,6 +204,7 @@ export default function App() {
                   columns: colsRes.status === 'fulfilled' ? colsRes.value : [],
                   indexes: idxRes.status === 'fulfilled' ? idxRes.value : [],
                   foreignKeys: fksRes.status === 'fulfilled' ? fksRes.value : [],
+                  stats: statsRes.status === 'fulfilled' ? statsRes.value : null,
                   ddl: ddlRes.status === 'fulfilled' ? ddlRes.value.ddl : '',
                   loading: false,
                 }
@@ -228,7 +238,7 @@ export default function App() {
     );
 
     try {
-      const [queryRes, colsRes, idxRes, ddlRes, fksRes] = await Promise.allSettled([
+      const [queryRes, colsRes, idxRes, ddlRes, fksRes, statsRes] = await Promise.allSettled([
         tauriBridge.executeQuery(
           connectedProfileId,
           tab.query || `SELECT * FROM ${tab.table} LIMIT 50;`,
@@ -240,6 +250,7 @@ export default function App() {
         tauriBridge.getTableIndexes(connectedProfileId, tab.table),
         tauriBridge.getTableDdl(connectedProfileId, tab.table),
         tauriBridge.getTableForeignKeys(connectedProfileId, tab.table, engine, connectedProfile?.database),
+        tauriBridge.getTableStats(connectedProfileId, tab.table, engine, connectedProfile?.database),
       ]);
 
       setTabs((prev) =>
@@ -251,6 +262,7 @@ export default function App() {
                 columns: colsRes.status === 'fulfilled' ? colsRes.value : [],
                 indexes: idxRes.status === 'fulfilled' ? idxRes.value : [],
                 foreignKeys: fksRes.status === 'fulfilled' ? fksRes.value : [],
+                stats: statsRes.status === 'fulfilled' ? statsRes.value : null,
                 ddl: ddlRes.status === 'fulfilled' ? ddlRes.value.ddl : '',
                 loading: false,
               }
@@ -675,6 +687,32 @@ export default function App() {
     }
   };
 
+  const handleCloneTable = async (targetTable: string, withData: boolean) => {
+    if (!connectedProfileId || !targetTableForModal) return;
+    try {
+      const sql = tauriBridge.generateCloneTableSql(engine, targetTableForModal, targetTable, withData);
+      await tauriBridge.executeQuery(connectedProfileId, sql, connectedProfile?.database, targetTableForModal);
+      await loadTables(connectedProfileId);
+      await handleSelectTable(targetTable, 'data');
+    } catch (err: any) {
+      alert(`Failed to clone table: ${err.message || err}`);
+    }
+  };
+
+  const handleImportData = async (cols: string[], rows: Record<string, any>[]): Promise<number> => {
+    if (!connectedProfileId || !targetTableForModal) return 0;
+    const count = await tauriBridge.batchInsertRows(
+      connectedProfileId,
+      engine,
+      targetTableForModal,
+      cols,
+      rows,
+      connectedProfile?.database
+    );
+    await handleRefreshActiveTable();
+    return count;
+  };
+
   const handleCreateTableFromDesigner = async (newTableName: string) => {
     if (!connectedProfileId) return;
     await loadTables(connectedProfileId);
@@ -760,6 +798,15 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setIsServerVariablesOpen(true)}
+                title="Server Variables & Configurations"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition cursor-pointer"
+              >
+                <SlidersHorizontal className="w-3 h-3 text-purple-400" />
+                <span>Variables</span>
+              </button>
+
+              <button
                 onClick={() => loadTables(connectedProfile.id)}
                 title="Refresh All Tables"
                 className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-800 transition cursor-pointer"
@@ -808,6 +855,18 @@ export default function App() {
                   >
                     <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Insert Row</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTargetTableForModal(activeTab.table || '');
+                      setIsImportDataOpen(true);
+                    }}
+                    title={`Import Data into ${activeTab.table}`}
+                    className="px-2 py-1 bg-sky-950/70 hover:bg-sky-900/80 text-sky-300 hover:text-white rounded-md text-xs font-medium border border-sky-800/60 flex items-center space-x-1 transition cursor-pointer"
+                  >
+                    <Upload className="w-3 h-3 text-sky-400" />
+                    <span>Import</span>
                   </button>
                 </div>
               )}
@@ -872,6 +931,15 @@ export default function App() {
             setTargetTableForModal(tbl);
             setIsInsertRowOpen(true);
           }}
+          onOpenCloneTable={(tbl) => {
+            setTargetTableForModal(tbl);
+            setIsCloneTableOpen(true);
+          }}
+          onOpenImportData={(tbl) => {
+            setTargetTableForModal(tbl);
+            setIsImportDataOpen(true);
+          }}
+          onOpenServerVariables={() => setIsServerVariablesOpen(true)}
           onOpenEditColumnForTable={(tbl, col) => {
             setTargetTableForModal(tbl);
             setEditingColumn(col);
@@ -912,6 +980,12 @@ export default function App() {
                   tableName={activeTab?.table}
                   engine={engine}
                   ddl={activeTab?.ddl}
+                  onOpenImportData={() => {
+                    if (activeTab?.table) {
+                      setTargetTableForModal(activeTab.table);
+                      setIsImportDataOpen(true);
+                    }
+                  }}
                 />
               </div>
             ) : (
@@ -925,6 +999,7 @@ export default function App() {
                 indexes={activeTab?.indexes || []}
                 foreignKeys={activeTab?.foreignKeys || []}
                 tables={tables}
+                stats={activeTab?.stats}
                 ddl={activeTab?.ddl || ''}
                 loading={activeTab?.loading || false}
                 onRefresh={handleRefreshActiveTable}
@@ -944,6 +1019,10 @@ export default function App() {
                 onOpenInsertRow={() => {
                   setTargetTableForModal(activeTab?.table || '');
                   setIsInsertRowOpen(true);
+                }}
+                onOpenImportData={() => {
+                  setTargetTableForModal(activeTab?.table || '');
+                  setIsImportDataOpen(true);
                 }}
                 onDeleteRow={handleDeleteRow}
                 onUpdateCell={handleUpdateCell}
@@ -1027,6 +1106,31 @@ export default function App() {
         engine={engine}
         database={connectedProfile?.database}
         onClose={() => setIsProcessListOpen(false)}
+      />
+
+      <CloneTableModal
+        isOpen={isCloneTableOpen}
+        sourceTable={targetTableForModal}
+        engine={engine}
+        onClose={() => setIsCloneTableOpen(false)}
+        onClone={handleCloneTable}
+      />
+
+      <DataImportModal
+        isOpen={isImportDataOpen}
+        tableName={targetTableForModal}
+        columns={activeTab?.columns || []}
+        engine={engine}
+        onClose={() => setIsImportDataOpen(false)}
+        onImport={handleImportData}
+      />
+
+      <ServerVariablesModal
+        isOpen={isServerVariablesOpen}
+        connectionId={connectedProfileId}
+        engine={engine}
+        database={connectedProfile?.database}
+        onClose={() => setIsServerVariablesOpen(false)}
       />
     </div>
   );

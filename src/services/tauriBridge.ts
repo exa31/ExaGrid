@@ -10,10 +10,12 @@ import type {
   PingResult,
   ProcessInfo,
   QueryResult,
+  ServerVariable,
   StoredProfile,
   TableDdl,
   TableMeta,
   TableSchemaSpec,
+  TableStatsMeta,
 } from '../types/database';
 
 export const isTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -696,5 +698,166 @@ export const tauriBridge = {
     }
 
     return out;
+  },
+
+  getTableStats: async (
+    connectionId: string,
+    table: string,
+    engine: DatabaseEngine,
+    database?: string
+  ): Promise<TableStatsMeta | null> => {
+    try {
+      if (engine === 'mysql') {
+        const sql = `SHOW TABLE STATUS LIKE '${table}';`;
+        const res = await tauriBridge.executeQuery(connectionId, sql, database, table);
+        if (res.rows.length > 0) {
+          const row = res.rows[0];
+          const dataLen = Number(row.Data_length ?? row.data_length ?? 0);
+          const idxLen = Number(row.Index_length ?? row.index_length ?? 0);
+          return {
+            table_name: table,
+            engine: String(row.Engine ?? row.engine ?? 'InnoDB'),
+            row_count: Number(row.Rows ?? row.rows ?? 0),
+            data_size_bytes: dataLen,
+            index_size_bytes: idxLen,
+            total_size_bytes: dataLen + idxLen,
+            avg_row_length: Number(row.Avg_row_length ?? row.avg_row_length ?? 0),
+            auto_increment: row.Auto_increment ?? row.auto_increment,
+            collation: String(row.Collation ?? row.collation ?? 'utf8mb4_unicode_ci'),
+            create_time: row.Create_time ? String(row.Create_time) : undefined,
+            update_time: row.Update_time ? String(row.Update_time) : undefined,
+          };
+        }
+      }
+
+      if (engine === 'postgres') {
+        const sql = `SELECT 
+          pg_total_relation_size(quote_ident('${table}')) as total_size,
+          pg_relation_size(quote_ident('${table}')) as data_size,
+          pg_indexes_size(quote_ident('${table}')) as index_size,
+          reltuples::bigint as row_count
+        FROM pg_class
+        WHERE relname = '${table}';`;
+        const res = await tauriBridge.executeQuery(connectionId, sql, database, table);
+        if (res.rows.length > 0) {
+          const row = res.rows[0];
+          const dataLen = Number(row.data_size || 0);
+          const idxLen = Number(row.index_size || 0);
+          const totalLen = Number(row.total_size || 0);
+          return {
+            table_name: table,
+            engine: 'PostgreSQL Relational',
+            row_count: Number(row.row_count || 0),
+            data_size_bytes: dataLen,
+            index_size_bytes: idxLen,
+            total_size_bytes: totalLen,
+          };
+        }
+      }
+
+      if (engine === 'sqlite') {
+        const sql = `SELECT count(*) as row_count FROM '${table}';`;
+        const res = await tauriBridge.executeQuery(connectionId, sql);
+        return {
+          table_name: table,
+          engine: 'SQLite B-Tree',
+          row_count: Number(res.rows[0]?.row_count || 0),
+        };
+      }
+
+      return null;
+    } catch (_err) {
+      return null;
+    }
+  },
+
+  getServerVariables: async (
+    connectionId: string,
+    engine: DatabaseEngine,
+    database?: string
+  ): Promise<ServerVariable[]> => {
+    try {
+      if (engine === 'mysql') {
+        const res = await tauriBridge.executeQuery(connectionId, 'SHOW VARIABLES;', database);
+        return res.rows.map((r: any) => ({
+          variable_name: String(r.Variable_name ?? r.variable_name ?? ''),
+          value: String(r.Value ?? r.value ?? ''),
+        }));
+      }
+
+      if (engine === 'postgres') {
+        const res = await tauriBridge.executeQuery(connectionId, 'SHOW ALL;', database);
+        return res.rows.map((r: any) => ({
+          variable_name: String(r.name ?? ''),
+          value: String(r.setting ?? ''),
+        }));
+      }
+
+      return [];
+    } catch (_err) {
+      return [];
+    }
+  },
+
+  generateCloneTableSql: (
+    engine: DatabaseEngine,
+    sourceTable: string,
+    targetTable: string,
+    withData: boolean
+  ): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    if (engine === 'mysql') {
+      let sql = `CREATE TABLE ${q}${targetTable}${q} LIKE ${q}${sourceTable}${q};\n`;
+      if (withData) {
+        sql += `INSERT INTO ${q}${targetTable}${q} SELECT * FROM ${q}${sourceTable}${q};`;
+      }
+      return sql;
+    }
+
+    if (engine === 'postgres') {
+      let sql = `CREATE TABLE ${q}${targetTable}${q} (LIKE ${q}${sourceTable}${q} INCLUDING ALL);\n`;
+      if (withData) {
+        sql += `INSERT INTO ${q}${targetTable}${q} SELECT * FROM ${q}${sourceTable}${q};`;
+      }
+      return sql;
+    }
+
+    // SQLite
+    return `CREATE TABLE ${q}${targetTable}${q} AS SELECT * FROM ${q}${sourceTable}${q}${withData ? '' : ' WHERE 0'};`;
+  },
+
+  batchInsertRows: async (
+    connectionId: string,
+    engine: DatabaseEngine,
+    table: string,
+    columns: string[],
+    rows: Record<string, any>[],
+    database?: string
+  ): Promise<number> => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const colsHeader = columns.map((c) => `${q}${c}${q}`).join(', ');
+    const chunkSize = 25;
+    let inserted = 0;
+
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const valuesList = chunk.map((r) => {
+        const vals = columns.map((col) => {
+          const val = r[col];
+          if (val === null || val === undefined || val === '') return 'NULL';
+          if (typeof val === 'number') return String(val);
+          if (typeof val === 'boolean') return val ? '1' : '0';
+          const esc = String(val).replace(/'/g, "''");
+          return `'${esc}'`;
+        });
+        return `(${vals.join(', ')})`;
+      });
+
+      const sql = `INSERT INTO ${q}${table}${q} (${colsHeader}) VALUES\n  ${valuesList.join(',\n  ')};`;
+      await tauriBridge.executeQuery(connectionId, sql, database, table);
+      inserted += chunk.length;
+    }
+
+    return inserted;
   },
 };

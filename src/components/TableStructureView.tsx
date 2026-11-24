@@ -1,4 +1,5 @@
 import {
+  BarChart2,
   Check,
   Code2,
   Copy,
@@ -24,11 +25,13 @@ import type {
   IndexMeta,
   QueryResult,
   TableMeta,
+  TableStatsMeta,
   TableTabSubView,
 } from '../types/database';
 import { ContextMenu, type ContextMenuSection } from './ContextMenu';
 import { DataGrid } from './DataGrid';
 import { ERDiagramView } from './ERDiagramView';
+import { TableStatsView } from './TableStatsView';
 
 interface TableStructureViewProps {
   tableName: string;
@@ -40,6 +43,7 @@ interface TableStructureViewProps {
   indexes: IndexMeta[];
   foreignKeys?: ForeignKeyMeta[];
   tables?: TableMeta[];
+  stats?: TableStatsMeta | null;
   ddl: string;
   loading: boolean;
   onRefresh: () => void;
@@ -48,6 +52,7 @@ interface TableStructureViewProps {
   onOpenAddIndex: () => void;
   onOpenAddForeignKey?: () => void;
   onOpenInsertRow: () => void;
+  onOpenImportData?: () => void;
   onDeleteRow?: (row: Record<string, any>) => void;
   onUpdateCell?: (row: Record<string, any>, colName: string, newValue: any) => Promise<void>;
   onDropColumn: (colName: string) => void;
@@ -67,6 +72,7 @@ export const TableStructureView = ({
   indexes,
   foreignKeys = [],
   tables = [],
+  stats,
   ddl,
   loading,
   onRefresh,
@@ -75,6 +81,7 @@ export const TableStructureView = ({
   onOpenAddIndex,
   onOpenAddForeignKey,
   onOpenInsertRow,
+  onOpenImportData,
   onDeleteRow,
   onUpdateCell,
   onDropColumn,
@@ -165,6 +172,18 @@ export const TableStructureView = ({
           >
             <GitFork className="w-3.5 h-3.5 text-purple-400" />
             <span>ER Diagram</span>
+          </button>
+
+          <button
+            onClick={() => onChangeSubView('statistics')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
+              subView === 'statistics'
+                ? 'bg-slate-800 text-slate-100 shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <BarChart2 className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Statistics</span>
           </button>
 
           <button
@@ -265,6 +284,7 @@ export const TableStructureView = ({
             engine={engine}
             ddl={ddl}
             onOpenInsertRow={onOpenInsertRow}
+            onOpenImportData={onOpenImportData}
             onDeleteRow={onDeleteRow}
             onUpdateCell={onUpdateCell}
           />
@@ -592,6 +612,15 @@ export const TableStructureView = ({
             columns={columns}
             foreignKeys={foreignKeys}
             onSelectTable={onSelectTable}
+          />
+        )}
+
+        {subView === 'statistics' && (
+          <TableStatsView
+            tableName={tableName}
+            stats={stats || null}
+            loading={loading}
+            onRefresh={onRefresh}
           />
         )}
 

@@ -1,9 +1,11 @@
 import {
   Activity,
+  BarChart3,
   ChevronDown,
   ChevronRight,
   Code2,
   Columns3,
+  Copy,
   FileCode,
   FolderTree,
   GitFork,
@@ -17,8 +19,10 @@ import {
   PlusCircle,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Table2,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -44,6 +48,9 @@ interface ObjectExplorerProps {
   onRefreshTables: () => void;
   onOpenCreateTable: () => void;
   onOpenProcessList?: () => void;
+  onOpenServerVariables?: () => void;
+  onOpenCloneTable?: (tableName: string) => void;
+  onOpenImportData?: (tableName: string) => void;
   onOpenAddColumnForTable?: (tableName: string) => void;
   onOpenAddIndexForTable?: (tableName: string) => void;
   onOpenInsertRowForTable?: (tableName: string) => void;
@@ -67,6 +74,9 @@ export const ObjectExplorer = ({
   onRefreshTables,
   onOpenCreateTable,
   onOpenProcessList,
+  onOpenServerVariables,
+  onOpenCloneTable,
+  onOpenImportData,
   onOpenAddColumnForTable,
   onOpenAddIndexForTable,
   onOpenInsertRowForTable,
@@ -139,6 +149,11 @@ export const ObjectExplorer = ({
             onClick: () => onSelectTable(tableName, 'foreign_keys'),
           },
           {
+            label: 'View Statistics & Metrics',
+            icon: <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />,
+            onClick: () => onSelectTable(tableName, 'statistics'),
+          },
+          {
             label: 'View ER Diagram',
             icon: <GitFork className="w-3.5 h-3.5 text-purple-400" />,
             onClick: () => onSelectTable(tableName, 'er_diagram'),
@@ -177,6 +192,24 @@ export const ObjectExplorer = ({
                   label: 'Insert Row...',
                   icon: <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />,
                   onClick: () => onOpenInsertRowForTable(tableName),
+                },
+              ]
+            : []),
+          ...(onOpenImportData
+            ? [
+                {
+                  label: 'Import Data (CSV/JSON)...',
+                  icon: <Upload className="w-3.5 h-3.5 text-emerald-400" />,
+                  onClick: () => onOpenImportData(tableName),
+                },
+              ]
+            : []),
+          ...(onOpenCloneTable
+            ? [
+                {
+                  label: 'Duplicate Table...',
+                  icon: <Copy className="w-3.5 h-3.5 text-indigo-400" />,
+                  onClick: () => onOpenCloneTable(tableName),
                 },
               ]
             : []),
@@ -239,6 +272,15 @@ export const ObjectExplorer = ({
                   label: 'Activity & Processlist',
                   icon: <Activity className="w-3.5 h-3.5 text-emerald-400" />,
                   onClick: onOpenProcessList,
+                },
+              ]
+            : []),
+          ...(onOpenServerVariables
+            ? [
+                {
+                  label: 'Server Variables & Config',
+                  icon: <SlidersHorizontal className="w-3.5 h-3.5 text-purple-400" />,
+                  onClick: onOpenServerVariables,
                 },
               ]
             : []),

@@ -122,7 +122,33 @@ export interface ProcessInfo {
   info?: string;
 }
 
-export type TableTabSubView = 'data' | 'structure' | 'indexes' | 'foreign_keys' | 'er_diagram' | 'ddl';
+export interface TableStatsMeta {
+  table_name: string;
+  engine?: string;
+  row_count?: number;
+  data_size_bytes?: number;
+  index_size_bytes?: number;
+  total_size_bytes?: number;
+  avg_row_length?: number;
+  auto_increment?: number | string;
+  collation?: string;
+  create_time?: string;
+  update_time?: string;
+}
+
+export interface ServerVariable {
+  variable_name: string;
+  value: string;
+}
+
+export type TableTabSubView =
+  | 'data'
+  | 'structure'
+  | 'indexes'
+  | 'foreign_keys'
+  | 'er_diagram'
+  | 'statistics'
+  | 'ddl';
 
 export type TabType = 'query' | 'table';
 
@@ -139,6 +165,7 @@ export interface TabItem {
   columns?: ColumnMeta[];
   indexes?: IndexMeta[];
   foreignKeys?: ForeignKeyMeta[];
+  stats?: TableStatsMeta | null;
   ddl?: string;
   loading?: boolean;
   error?: string | null;

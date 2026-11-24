@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -31,6 +32,7 @@ interface DataGridProps {
   engine?: DatabaseEngine;
   ddl?: string;
   onOpenInsertRow?: () => void;
+  onOpenImportData?: () => void;
   onDeleteRow?: (row: Record<string, any>) => void;
   onUpdateCell?: (row: Record<string, any>, colName: string, newValue: any) => Promise<void>;
   onApplySqlFilter?: (whereClause: string) => void;
@@ -47,6 +49,7 @@ export const DataGrid = ({
   engine = 'mysql',
   ddl = '',
   onOpenInsertRow,
+  onOpenImportData,
   onDeleteRow,
   onUpdateCell,
   onApplySqlFilter,
@@ -337,6 +340,15 @@ export const DataGrid = ({
                 },
               ]
             : []),
+          ...(onOpenImportData
+            ? [
+                {
+                  label: 'Import Data (CSV/JSON)...',
+                  icon: <Upload className="w-3.5 h-3.5 text-sky-400" />,
+                  onClick: onOpenImportData,
+                },
+              ]
+            : []),
         ],
       },
     ];
@@ -427,6 +439,17 @@ export const DataGrid = ({
             >
               <PlusCircle className="w-3.5 h-3.5" />
               <span>Insert</span>
+            </button>
+          )}
+
+          {onOpenImportData && (
+            <button
+              onClick={onOpenImportData}
+              title="Import Data from CSV or JSON"
+              className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-md transition cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5 text-sky-400" />
+              <span>Import</span>
             </button>
           )}
 
