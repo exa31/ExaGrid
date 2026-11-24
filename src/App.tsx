@@ -1,18 +1,31 @@
-import { ShieldCheck,Zap } from 'lucide-react';
-import { useEffect,useState } from 'react';
+import {
+  FileCode,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Zap,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
 
+import { AddColumnModal } from './components/AddColumnModal';
+import { AddIndexModal } from './components/AddIndexModal';
 import { ConnectionModal } from './components/ConnectionModal';
 import { DataGrid } from './components/DataGrid';
 import { ObjectExplorer } from './components/ObjectExplorer';
 import { QueryConsole } from './components/QueryConsole';
 import { Sidebar } from './components/Sidebar';
+import { TableDesignerModal } from './components/TableDesignerModal';
+import { TableStructureView } from './components/TableStructureView';
 import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { tauriBridge } from './services/tauriBridge';
 import type {
+  ColumnDefinition,
   ConnectionConfig,
+  IndexDefinition,
   StoredProfile,
   TabItem,
   TableMeta,
+  TableTabSubView,
 } from './types/database';
 
 export default function App() {
@@ -38,8 +51,13 @@ export default function App() {
   ]);
   const [activeTabId, setActiveTabId] = useState<string>('tab-1');
 
+  // Modals state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<ConnectionConfig | null>(null);
+  const [isDesignerOpen, setIsDesignerOpen] = useState(false);
+  const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
+  const [isAddIndexOpen, setIsAddIndexOpen] = useState(false);
+  const [targetTableForModal, setTargetTableForModal] = useState<string>('');
 
   useEffect(() => {
     loadProfiles();
@@ -59,6 +77,7 @@ export default function App() {
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || null;
   const connectedProfile = profiles.find((p) => p.id === connectedProfileId) || null;
+  const engine = connectedProfile?.engine || 'postgres';
 
   const handleConnect = async (profileId: string) => {
     setConnectingId(profileId);
@@ -99,22 +118,22 @@ export default function App() {
     }
   };
 
-  const handleSelectTable = async (tableName: string) => {
+  const handleSelectTable = async (tableName: string, view: TableTabSubView = 'data') => {
     const existingTab = tabs.find(
       (t) => t.type === 'table' && t.table === tableName && t.connectionId === connectedProfileId
     );
 
     if (existingTab) {
       setActiveTabId(existingTab.id);
+      setTabs((prev) =>
+        prev.map((t) => (t.id === existingTab.id ? { ...t, subView: view } : t))
+      );
       return;
     }
 
     const newTabId = `table-tab-${Date.now()}`;
-    const engine = connectedProfile?.engine || 'postgres';
     const initialQuery =
-      engine === 'mongo'
-        ? `{}`
-        : `SELECT * FROM ${tableName} LIMIT 50;`;
+      engine === 'mongo' ? `{}` : `SELECT * FROM ${tableName} LIMIT 50;`;
 
     const newTab: TabItem = {
       id: newTabId,
@@ -122,8 +141,12 @@ export default function App() {
       type: 'table',
       connectionId: connectedProfileId || '',
       table: tableName,
+      subView: view,
       query: initialQuery,
       queryResult: null,
+      columns: [],
+      indexes: [],
+      ddl: '',
       loading: true,
       error: null,
     };
@@ -133,15 +156,32 @@ export default function App() {
 
     if (connectedProfileId) {
       try {
-        const res = await tauriBridge.executeQuery(
-          connectedProfileId,
-          initialQuery,
-          connectedProfile?.database,
-          tableName,
-          50
-        );
+        const [queryRes, colsRes, idxRes, ddlRes] = await Promise.allSettled([
+          tauriBridge.executeQuery(
+            connectedProfileId,
+            initialQuery,
+            connectedProfile?.database,
+            tableName,
+            50
+          ),
+          tauriBridge.getTableColumns(connectedProfileId, tableName),
+          tauriBridge.getTableIndexes(connectedProfileId, tableName),
+          tauriBridge.getTableDdl(connectedProfileId, tableName),
+        ]);
+
         setTabs((prev) =>
-          prev.map((t) => (t.id === newTabId ? { ...t, queryResult: res, loading: false } : t))
+          prev.map((t) =>
+            t.id === newTabId
+              ? {
+                  ...t,
+                  queryResult: queryRes.status === 'fulfilled' ? queryRes.value : null,
+                  columns: colsRes.status === 'fulfilled' ? colsRes.value : [],
+                  indexes: idxRes.status === 'fulfilled' ? idxRes.value : [],
+                  ddl: ddlRes.status === 'fulfilled' ? ddlRes.value.ddl : '',
+                  loading: false,
+                }
+              : t
+          )
         );
       } catch (err: any) {
         setTabs((prev) =>
@@ -155,18 +195,69 @@ export default function App() {
     }
   };
 
-  const handleNewQueryTab = () => {
+  const handleChangeSubView = (view: TableTabSubView) => {
+    setTabs((prev) =>
+      prev.map((t) => (t.id === activeTabId ? { ...t, subView: view } : t))
+    );
+  };
+
+  const handleRefreshActiveTable = async () => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || tab.type !== 'table' || !tab.table || !connectedProfileId) return;
+
+    setTabs((prev) =>
+      prev.map((t) => (t.id === activeTabId ? { ...t, loading: true } : t))
+    );
+
+    try {
+      const [queryRes, colsRes, idxRes, ddlRes] = await Promise.allSettled([
+        tauriBridge.executeQuery(
+          connectedProfileId,
+          tab.query || `SELECT * FROM ${tab.table} LIMIT 50;`,
+          connectedProfile?.database,
+          tab.table,
+          50
+        ),
+        tauriBridge.getTableColumns(connectedProfileId, tab.table),
+        tauriBridge.getTableIndexes(connectedProfileId, tab.table),
+        tauriBridge.getTableDdl(connectedProfileId, tab.table),
+      ]);
+
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? {
+                ...t,
+                queryResult: queryRes.status === 'fulfilled' ? queryRes.value : null,
+                columns: colsRes.status === 'fulfilled' ? colsRes.value : [],
+                indexes: idxRes.status === 'fulfilled' ? idxRes.value : [],
+                ddl: ddlRes.status === 'fulfilled' ? ddlRes.value.ddl : '',
+                loading: false,
+              }
+            : t
+        )
+      );
+    } finally {
+      setTabs((prev) =>
+        prev.map((t) => (t.id === activeTabId ? { ...t, loading: false } : t))
+      );
+    }
+  };
+
+  const handleNewQueryTab = (initialQuery?: string) => {
     const tabNum = tabs.filter((t) => t.type === 'query').length + 1;
     const newTabId = `query-tab-${Date.now()}`;
+    const defaultQuery =
+      engine === 'mongo'
+        ? `{"status": "active"}`
+        : `SELECT * FROM ${tables[0]?.name || 'users'} LIMIT 50;`;
+
     const newTab: TabItem = {
       id: newTabId,
       title: `Query ${tabNum}`,
       type: 'query',
       connectionId: connectedProfileId || '',
-      query:
-        connectedProfile?.engine === 'mongo'
-          ? `{"status": "active"}`
-          : `SELECT * FROM ${tables[0]?.name || 'users'} LIMIT 50;`,
+      query: initialQuery || defaultQuery,
       queryResult: null,
       loading: false,
       error: null,
@@ -220,6 +311,140 @@ export default function App() {
     }
   };
 
+  // Alter Table Handlers
+  const handleAddColumnToTable = async (col: ColumnDefinition) => {
+    if (!connectedProfileId || !targetTableForModal) return;
+    const sql = tauriBridge.generateAddColumnSql(engine, targetTableForModal, col);
+    await tauriBridge.executeQuery(
+      connectedProfileId,
+      sql,
+      connectedProfile?.database,
+      targetTableForModal
+    );
+    await handleRefreshActiveTable();
+    await loadTables(connectedProfileId);
+  };
+
+  const handleAddIndexToTable = async (idx: IndexDefinition) => {
+    if (!connectedProfileId || !targetTableForModal) return;
+    const sql = tauriBridge.generateAddIndexSql(engine, targetTableForModal, idx);
+    await tauriBridge.executeQuery(
+      connectedProfileId,
+      sql,
+      connectedProfile?.database,
+      targetTableForModal
+    );
+    await handleRefreshActiveTable();
+  };
+
+  const handleDropColumn = async (colName: string) => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab?.table || !connectedProfileId) return;
+
+    if (
+      !confirm(
+        `Are you sure you want to drop column "${colName}" from table "${tab.table}"?\nThis cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDropColumnSql(engine, tab.table, colName);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        tab.table
+      );
+      await handleRefreshActiveTable();
+      await loadTables(connectedProfileId);
+    } catch (err: any) {
+      alert(`Failed to drop column: ${err.message || err}`);
+    }
+  };
+
+  const handleDropIndex = async (indexName: string) => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab?.table || !connectedProfileId) return;
+
+    if (
+      !confirm(
+        `Are you sure you want to drop index "${indexName}" from table "${tab.table}"?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDropIndexSql(engine, tab.table, indexName);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        tab.table
+      );
+      await handleRefreshActiveTable();
+    } catch (err: any) {
+      alert(`Failed to drop index: ${err.message || err}`);
+    }
+  };
+
+  const handleTruncateTable = async (tableName: string) => {
+    if (!connectedProfileId) return;
+    if (
+      !confirm(
+        `WARNING: Are you sure you want to TRUNCATE table "${tableName}"?\nAll rows will be permanently deleted.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateTruncateTableSql(engine, tableName);
+      await tauriBridge.executeQuery(connectedProfileId, sql, connectedProfile?.database, tableName);
+      await loadTables(connectedProfileId);
+      if (activeTab?.table === tableName) {
+        await handleRefreshActiveTable();
+      }
+    } catch (err: any) {
+      alert(`Failed to truncate table: ${err.message || err}`);
+    }
+  };
+
+  const handleDropTable = async (tableName: string) => {
+    if (!connectedProfileId) return;
+    if (
+      !confirm(
+        `DANGER: Are you sure you want to DROP table "${tableName}"?\nAll schema structure and data will be permanently destroyed.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDropTableSql(engine, tableName);
+      await tauriBridge.executeQuery(connectedProfileId, sql, connectedProfile?.database, tableName);
+      // Close tabs related to dropped table
+      const remainingTabs = tabs.filter((t) => !(t.type === 'table' && t.table === tableName));
+      if (remainingTabs.length > 0) {
+        setTabs(remainingTabs);
+        setActiveTabId(remainingTabs[0].id);
+      } else {
+        handleNewQueryTab();
+      }
+      await loadTables(connectedProfileId);
+    } catch (err: any) {
+      alert(`Failed to drop table: ${err.message || err}`);
+    }
+  };
+
+  const handleCreateTableFromDesigner = async (newTableName: string) => {
+    if (!connectedProfileId) return;
+    await loadTables(connectedProfileId);
+    await handleSelectTable(newTableName, 'structure');
+  };
+
   const handleSaveProfile = async (cfg: ConnectionConfig) => {
     await tauriBridge.saveConnection(cfg);
     await loadProfiles();
@@ -238,6 +463,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
+      {/* Top Application Bar */}
       <header className="h-11 bg-slate-950 border-b border-slate-800/80 px-4 flex items-center justify-between select-none shrink-0 z-20">
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-2">
@@ -266,17 +492,50 @@ export default function App() {
               <span>Not Connected</span>
             </div>
           )}
+
+          {/* Quick Action Menus like DBeaver */}
+          {connectedProfile && (
+            <div className="flex items-center space-x-1 pl-2">
+              <button
+                onClick={() => setIsDesignerOpen(true)}
+                title="Create New Table"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition"
+              >
+                <Plus className="w-3 h-3 text-emerald-400" />
+                <span>New Table</span>
+              </button>
+
+              <button
+                onClick={() => handleNewQueryTab()}
+                title="Open New SQL Console"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition"
+              >
+                <FileCode className="w-3 h-3 text-indigo-400" />
+                <span>SQL Console</span>
+              </button>
+
+              <button
+                onClick={() => loadTables(connectedProfile.id)}
+                title="Refresh All Tables"
+                className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-800 transition"
+              >
+                <RefreshCw className={`w-3 h-3 ${loadingTables ? 'animate-spin text-indigo-400' : ''}`} />
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center space-x-2 text-xs text-slate-400">
+        <div className="flex items-center space-x-3 text-xs text-slate-400">
           <span className="flex items-center space-x-1 text-[11px] text-slate-500">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>AES-256 Storage</span>
+            <span>AES-256 Encrypted</span>
           </span>
         </div>
       </header>
 
+      {/* Main Workspace Layout */}
       <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar: Connection Profiles */}
         <Sidebar
           profiles={profiles}
           activeProfileId={activeProfileId}
@@ -298,51 +557,108 @@ export default function App() {
           connectingId={connectingId}
         />
 
+        {/* Object Explorer: Database & Tables Hierarchy */}
         <ObjectExplorer
           activeProfileName={connectedProfile?.name || activeProfile?.name || null}
           databaseName={connectedProfile?.database || activeProfile?.database || null}
+          engine={engine}
           tables={tables}
           loading={loadingTables}
           onSelectTable={handleSelectTable}
-          onOpenNewQuery={handleNewQueryTab}
+          onOpenNewQuery={() => handleNewQueryTab()}
           onRefreshTables={() => connectedProfileId && loadTables(connectedProfileId)}
+          onOpenCreateTable={() => setIsDesignerOpen(true)}
+          onTruncateTable={handleTruncateTable}
+          onDropTable={handleDropTable}
+          onGenerateSql={(sql) => handleNewQueryTab(sql)}
         />
 
+        {/* Central Workspace */}
         <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
           <WorkspaceTabs
             tabs={tabs}
             activeTabId={activeTabId}
             onSelectTab={setActiveTabId}
             onCloseTab={handleCloseTab}
-            onNewQueryTab={handleNewQueryTab}
+            onNewQueryTab={() => handleNewQueryTab()}
           />
 
           <div className="flex-1 flex flex-col overflow-hidden">
-            {activeTab?.type === 'query' && (
-              <QueryConsole
-                initialQuery={activeTab.query}
-                onExecute={handleExecuteQuery}
-                loading={activeTab.loading || false}
-                result={activeTab.queryResult || null}
-                error={activeTab.error || null}
-                engine={connectedProfile?.engine}
+            {activeTab?.type === 'query' ? (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <QueryConsole
+                  initialQuery={activeTab.query}
+                  onExecute={handleExecuteQuery}
+                  loading={activeTab.loading || false}
+                  result={activeTab.queryResult || null}
+                  error={activeTab.error || null}
+                  engine={engine}
+                />
+                <DataGrid
+                  result={activeTab?.queryResult || null}
+                  loading={activeTab?.loading || false}
+                  tableName={activeTab?.table}
+                />
+              </div>
+            ) : (
+              <TableStructureView
+                tableName={activeTab?.table || ''}
+                engine={engine}
+                subView={activeTab?.subView || 'data'}
+                onChangeSubView={handleChangeSubView}
+                result={activeTab?.queryResult || null}
+                columns={activeTab?.columns || []}
+                indexes={activeTab?.indexes || []}
+                ddl={activeTab?.ddl || ''}
+                loading={activeTab?.loading || false}
+                onRefresh={handleRefreshActiveTable}
+                onOpenAddColumn={() => {
+                  setTargetTableForModal(activeTab?.table || '');
+                  setIsAddColumnOpen(true);
+                }}
+                onOpenAddIndex={() => {
+                  setTargetTableForModal(activeTab?.table || '');
+                  setIsAddIndexOpen(true);
+                }}
+                onDropColumn={handleDropColumn}
+                onDropIndex={handleDropIndex}
+                onOpenInSqlEditor={(sql) => handleNewQueryTab(sql)}
               />
             )}
-
-            <DataGrid
-              result={activeTab?.queryResult || null}
-              loading={activeTab?.loading || false}
-              tableName={activeTab?.table}
-            />
           </div>
         </main>
       </div>
 
+      {/* Modals */}
       <ConnectionModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSave={handleSaveProfile}
         initialConfig={editingProfile}
+      />
+
+      <TableDesignerModal
+        isOpen={isDesignerOpen}
+        engine={engine}
+        databaseName={connectedProfile?.database}
+        onClose={() => setIsDesignerOpen(false)}
+        onCreateSuccess={handleCreateTableFromDesigner}
+      />
+
+      <AddColumnModal
+        isOpen={isAddColumnOpen}
+        tableName={targetTableForModal}
+        engine={engine}
+        onClose={() => setIsAddColumnOpen(false)}
+        onAdd={handleAddColumnToTable}
+      />
+
+      <AddIndexModal
+        isOpen={isAddIndexOpen}
+        tableName={targetTableForModal}
+        columns={activeTab?.columns || []}
+        onClose={() => setIsAddIndexOpen(false)}
+        onAdd={handleAddIndexToTable}
       />
     </div>
   );

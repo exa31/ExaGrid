@@ -1,6 +1,6 @@
 use std::time::Instant;
 use sqlx::{sqlite::SqlitePoolOptions, Column, Row, SqlitePool, TypeInfo};
-use crate::drivers::{ColumnMeta, ConnectionConfig, PingResult, QueryResult, TableMeta};
+use crate::drivers::{ColumnMeta, ConnectionConfig, IndexMeta, PingResult, QueryResult, TableMeta};
 use crate::pkg::errors::AppError;
 
 pub struct SqliteDriver;
@@ -77,6 +77,52 @@ impl SqliteDriver {
             });
         }
         Ok(columns)
+    }
+
+    pub async fn get_indexes(pool: &SqlitePool, table: &str) -> Result<Vec<IndexMeta>, AppError> {
+        let sql = format!("PRAGMA index_list(\"{}\")", table.replace('"', "\"\""));
+        let rows = sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut indexes = Vec::new();
+        for row in rows {
+            let name: String = row.try_get("name").unwrap_or_default();
+            let is_unique: bool = row.try_get::<i64, _>("unique").map(|u| u == 1).unwrap_or(false);
+            let origin: String = row.try_get("origin").unwrap_or_default();
+            let is_primary = origin.to_uppercase() == "PK";
+
+            let info_sql = format!("PRAGMA index_info(\"{}\")", name.replace('"', "\"\""));
+            let mut cols = Vec::new();
+            if let Ok(col_rows) = sqlx::query(&info_sql).fetch_all(pool).await {
+                for cr in col_rows {
+                    if let Ok(cname) = cr.try_get::<String, _>("name") {
+                        cols.push(cname);
+                    }
+                }
+            }
+
+            indexes.push(IndexMeta {
+                name,
+                columns: cols,
+                is_unique,
+                is_primary,
+                index_type: Some("BTREE".into()),
+            });
+        }
+        Ok(indexes)
+    }
+
+    pub async fn get_ddl(pool: &SqlitePool, table: &str) -> Result<String, AppError> {
+        let row = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?")
+            .bind(table)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let ddl: String = row.try_get("sql").unwrap_or_default();
+        Ok(ddl)
     }
 
     pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, AppError> {

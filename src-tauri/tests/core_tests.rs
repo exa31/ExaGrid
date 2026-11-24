@@ -73,6 +73,17 @@ async fn test_sqlite_driver_lifecycle() {
     assert_eq!(result.columns.len(), 4);
     assert!(result.execution_time_ms < 1000);
 
+    // 8. Test Indexes & DDL
+    SqliteDriver::execute_query(&pool, "CREATE UNIQUE INDEX idx_users_email ON users(email);")
+        .await
+        .expect("Create index failed");
+    let indexes = SqliteDriver::get_indexes(&pool, "users").await.expect("Get indexes failed");
+    assert!(indexes.iter().any(|i| i.name == "idx_users_email" && i.is_unique));
+
+    let ddl = SqliteDriver::get_ddl(&pool, "users").await.expect("Get DDL failed");
+    assert!(ddl.contains("CREATE TABLE"));
+    assert!(ddl.contains("users"));
+
     // Clean up temporary database file
     let _ = std::fs::remove_file(temp_db);
 }
@@ -197,4 +208,19 @@ async fn test_mysql_podman_lifecycle() {
     let query_res = MySqlDriver::execute_query(&pool, "SELECT * FROM bca_accounts").await.expect("Query failed");
     println!("Columns: {:?}", query_res.columns.iter().map(|c| &c.name).collect::<Vec<_>>());
     println!("Rows: {:?}", query_res.rows);
+
+    println!("Testing MySQL get_indexes...");
+    let indexes = MySqlDriver::get_indexes(&pool, "bca_accounts").await.expect("Get indexes failed");
+    println!("Indexes count: {}", indexes.len());
+    for idx in &indexes {
+        println!("Index: {} on {:?} (unique: {}, pk: {})", idx.name, idx.columns, idx.is_unique, idx.is_primary);
+    }
+    assert!(!indexes.is_empty());
+    assert!(indexes.iter().any(|i| i.is_primary));
+
+    println!("Testing MySQL get_ddl...");
+    let ddl = MySqlDriver::get_ddl(&pool, "bca_accounts").await.expect("Get DDL failed");
+    println!("DDL:\n{}", ddl);
+    assert!(ddl.contains("CREATE TABLE"));
+    assert!(ddl.contains("bca_accounts"));
 }

@@ -46,6 +46,21 @@ pub struct TableMeta {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IndexMeta {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub is_unique: bool,
+    pub is_primary: bool,
+    pub index_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TableDdl {
+    pub table: String,
+    pub ddl: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QueryResult {
     pub columns: Vec<ColumnMeta>,
     pub rows: Vec<serde_json::Value>,

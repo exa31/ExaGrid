@@ -9,8 +9,8 @@ use tokio::sync::RwLock;
 
 use crate::commands::{
     connect_database, delete_connection, disconnect_database, execute_query, export_data,
-    get_table_columns, list_connections, list_tables, save_connection, test_connection,
-    AppState,
+    get_table_columns, get_table_ddl, get_table_indexes, list_connections, list_tables,
+    save_connection, test_connection, AppState,
 };
 use crate::config::storage::StorageManager;
 
@@ -32,6 +32,8 @@ pub fn run() {
             disconnect_database,
             list_tables,
             get_table_columns,
+            get_table_indexes,
+            get_table_ddl,
             execute_query,
             export_data,
         ])

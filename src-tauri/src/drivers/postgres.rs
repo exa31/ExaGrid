@@ -1,6 +1,6 @@
 use std::time::Instant;
 use sqlx::{postgres::PgPoolOptions, Column, PgPool, Row, TypeInfo};
-use crate::drivers::{ColumnMeta, ConnectionConfig, PingResult, QueryResult, TableMeta};
+use crate::drivers::{ColumnMeta, ConnectionConfig, IndexMeta, PingResult, QueryResult, TableMeta};
 use crate::pkg::errors::AppError;
 
 pub struct PostgresDriver;
@@ -69,13 +69,27 @@ impl PostgresDriver {
     }
 
     pub async fn get_columns(pool: &PgPool, table: &str) -> Result<Vec<ColumnMeta>, AppError> {
+        let clean_table = table.split('.').last().unwrap_or(table);
         let rows = sqlx::query(
-            "SELECT column_name, data_type, is_nullable 
-             FROM information_schema.columns 
-             WHERE table_name = $1 
-             ORDER BY ordinal_position"
+            "SELECT 
+                c.column_name, 
+                c.data_type, 
+                c.is_nullable,
+                EXISTS (
+                    SELECT 1 
+                    FROM information_schema.table_constraints tc 
+                    JOIN information_schema.key_column_usage kcu 
+                      ON tc.constraint_name = kcu.constraint_name 
+                     AND tc.table_schema = kcu.table_schema
+                    WHERE tc.constraint_type = 'PRIMARY KEY' 
+                      AND tc.table_name = c.table_name 
+                      AND kcu.column_name = c.column_name
+                ) AS is_pk
+             FROM information_schema.columns c
+             WHERE c.table_name = $1 
+             ORDER BY c.ordinal_position"
         )
-        .bind(table)
+        .bind(clean_table)
         .fetch_all(pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -85,14 +99,100 @@ impl PostgresDriver {
             let name: String = row.try_get("column_name").unwrap_or_default();
             let data_type: String = row.try_get("data_type").unwrap_or_else(|_| "text".into());
             let is_nullable: String = row.try_get("is_nullable").unwrap_or_else(|_| "YES".into());
+            let is_pk: bool = row.try_get("is_pk").unwrap_or(false);
             columns.push(ColumnMeta {
                 name,
                 data_type,
                 nullable: is_nullable.to_uppercase() == "YES",
-                is_primary_key: false,
+                is_primary_key: is_pk,
             });
         }
         Ok(columns)
+    }
+
+    pub async fn get_indexes(pool: &PgPool, table: &str) -> Result<Vec<IndexMeta>, AppError> {
+        let clean_table = table.split('.').last().unwrap_or(table);
+        let rows = sqlx::query(
+            "SELECT
+                i.relname AS index_name,
+                a.attname AS column_name,
+                ix.indisunique AS is_unique,
+                ix.indisprimary AS is_primary,
+                am.amname AS index_type
+             FROM pg_class t
+             JOIN pg_index ix ON t.oid = ix.indrelid
+             JOIN pg_class i ON i.oid = ix.indexrelid
+             JOIN pg_am am ON i.relam = am.oid
+             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+             WHERE t.relname = $1
+             ORDER BY i.relname, a.attnum"
+        )
+        .bind(clean_table)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut index_map: std::collections::BTreeMap<String, (bool, bool, Option<String>, Vec<String>)> = std::collections::BTreeMap::new();
+
+        for row in rows {
+            let name: String = row.try_get("index_name").unwrap_or_default();
+            let col_name: String = row.try_get("column_name").unwrap_or_default();
+            let is_unique: bool = row.try_get("is_unique").unwrap_or(false);
+            let is_primary: bool = row.try_get("is_primary").unwrap_or(false);
+            let idx_type: Option<String> = row.try_get("index_type").ok();
+
+            let entry = index_map.entry(name).or_insert((is_unique, is_primary, idx_type, Vec::new()));
+            entry.3.push(col_name);
+        }
+
+        let mut indexes = Vec::new();
+        for (name, (is_unique, is_primary, index_type, columns)) in index_map {
+            indexes.push(IndexMeta {
+                name,
+                columns,
+                is_unique,
+                is_primary,
+                index_type,
+            });
+        }
+        Ok(indexes)
+    }
+
+    pub async fn get_ddl(pool: &PgPool, table: &str) -> Result<String, AppError> {
+        let clean_table = table.split('.').last().unwrap_or(table);
+        let cols = Self::get_columns(pool, clean_table).await?;
+        
+        let mut ddl = format!("CREATE TABLE \"{}\" (\n", clean_table);
+        let mut col_defs = Vec::new();
+        let mut pks = Vec::new();
+
+        for c in &cols {
+            let null_str = if c.nullable { "" } else { " NOT NULL" };
+            col_defs.push(format!("    \"{}\" {}{}", c.name, c.data_type, null_str));
+            if c.is_primary_key {
+                pks.push(format!("\"{}\"", c.name));
+            }
+        }
+
+        if !pks.is_empty() {
+            col_defs.push(format!("    PRIMARY KEY ({})", pks.join(", ")));
+        }
+
+        ddl.push_str(&col_defs.join(",\n"));
+        ddl.push_str("\n);");
+
+        // Append index definitions
+        if let Ok(indexes) = Self::get_indexes(pool, clean_table).await {
+            for idx in indexes {
+                if !idx.is_primary {
+                    let uniq = if idx.is_unique { "UNIQUE " } else { "" };
+                    let cols_str = idx.columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+                    ddl.push_str(&format!("\n\nCREATE {}INDEX \"{}\" ON \"{}\" ({});", uniq, idx.name, clean_table, cols_str));
+                }
+            }
+        }
+
+        Ok(ddl)
     }
 
     pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, AppError> {

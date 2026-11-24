@@ -1,10 +1,17 @@
 import type {
+  ColumnDefinition,
   ColumnMeta,
   ConnectionConfig,
+  DatabaseEngine,
+  IndexDefinition,
+  IndexMeta,
   PingResult,
   QueryResult,
   StoredProfile,
-  TableMeta} from '../types/database';
+  TableDdl,
+  TableMeta,
+  TableSchemaSpec,
+} from '../types/database';
 
 export const isTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -177,6 +184,38 @@ async function mockTauriHandler<T>(cmd: string, args: Record<string, any>): Prom
       } as T;
     }
 
+    case 'get_table_indexes': {
+      const idxs: IndexMeta[] = [
+        {
+          name: 'PRIMARY',
+          columns: ['id'],
+          is_unique: true,
+          is_primary: true,
+          index_type: 'BTREE',
+        },
+        {
+          name: 'idx_users_email',
+          columns: ['email'],
+          is_unique: true,
+          is_primary: false,
+          index_type: 'BTREE',
+        },
+      ];
+      return idxs as T;
+    }
+
+    case 'get_table_ddl': {
+      const ddl = `CREATE TABLE \`${args.table || 'example'}\` (
+  \`id\` bigint unsigned NOT NULL AUTO_INCREMENT,
+  \`name\` varchar(255) NOT NULL,
+  \`email\` varchar(255) NOT NULL,
+  \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (\`id\`),
+  UNIQUE KEY \`idx_email\` (\`email\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`;
+      return { table: args.table || 'example', ddl } as T;
+    }
+
     case 'export_data': {
       const blob = new Blob([JSON.stringify(args.rows, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -217,6 +256,12 @@ export const tauriBridge = {
   getTableColumns: (connectionId: string, table: string) =>
     callTauri<ColumnMeta[]>('get_table_columns', { connectionId, table }),
 
+  getTableIndexes: (connectionId: string, table: string) =>
+    callTauri<IndexMeta[]>('get_table_indexes', { connectionId, table }),
+
+  getTableDdl: (connectionId: string, table: string) =>
+    callTauri<TableDdl>('get_table_ddl', { connectionId, table }),
+
   executeQuery: (
     connectionId: string,
     query: string,
@@ -234,4 +279,129 @@ export const tauriBridge = {
 
   exportData: (rows: Record<string, any>[], format: 'csv' | 'json', filePath: string) =>
     callTauri<string>('export_data', { rows, format, filePath }),
+
+  // === DDL & SQL Generation Helpers ===
+  generateCreateTableSql: (engine: DatabaseEngine, spec: TableSchemaSpec): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const cols = spec.columns.map((c) => {
+      let typeStr = c.data_type.toUpperCase();
+      if (c.length_or_precision) {
+        typeStr = `${typeStr}(${c.length_or_precision})`;
+      }
+
+      // Auto increment syntax per engine
+      let aiStr = '';
+      if (c.auto_increment) {
+        if (engine === 'mysql') {
+          aiStr = ' AUTO_INCREMENT';
+        } else if (engine === 'sqlite') {
+          aiStr = ' AUTOINCREMENT';
+        } else if (engine === 'postgres') {
+          // In Postgres, SERIAL replaces INT
+          if (typeStr.startsWith('INT') || typeStr.startsWith('BIGINT')) {
+            typeStr = typeStr.startsWith('BIGINT') ? 'BIGSERIAL' : 'SERIAL';
+          }
+        }
+      }
+
+      const nullStr = c.nullable ? '' : ' NOT NULL';
+      const defStr = c.default_value ? ` DEFAULT ${c.default_value}` : '';
+      const pkStr = c.is_primary_key && engine === 'sqlite' ? ' PRIMARY KEY' : '';
+
+      return `  ${q}${c.name}${q} ${typeStr}${nullStr}${defStr}${aiStr}${pkStr}`;
+    });
+
+    const pks = spec.columns.filter((c) => c.is_primary_key);
+    if (pks.length > 0 && engine !== 'sqlite') {
+      const pkCols = pks.map((p) => `${q}${p.name}${q}`).join(', ');
+      cols.push(`  PRIMARY KEY (${pkCols})`);
+    }
+
+    let sql = `CREATE TABLE ${q}${spec.table_name}${q} (\n${cols.join(',\n')}\n)`;
+    if (engine === 'mysql') {
+      sql += ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
+    } else {
+      sql += ';';
+    }
+
+    if (spec.indexes && spec.indexes.length > 0) {
+      const idxSqls = spec.indexes.map((idx) => {
+        const u = idx.is_unique ? 'UNIQUE ' : '';
+        const idxCols = idx.columns.map((col) => `${q}${col}${q}`).join(', ');
+        return `\nCREATE ${u}INDEX ${q}${idx.name}${q} ON ${q}${spec.table_name}${q} (${idxCols});`;
+      });
+      sql += idxSqls.join('');
+    }
+
+    return sql;
+  },
+
+  generateAddColumnSql: (engine: DatabaseEngine, table: string, col: ColumnDefinition): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    let typeStr = col.data_type.toUpperCase();
+    if (col.length_or_precision) {
+      typeStr = `${typeStr}(${col.length_or_precision})`;
+    }
+    const nullStr = col.nullable ? '' : ' NOT NULL';
+    const defStr = col.default_value ? ` DEFAULT ${col.default_value}` : '';
+    return `ALTER TABLE ${q}${table}${q} ADD COLUMN ${q}${col.name}${q} ${typeStr}${nullStr}${defStr};`;
+  },
+
+  generateDropColumnSql: (engine: DatabaseEngine, table: string, column: string): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    return `ALTER TABLE ${q}${table}${q} DROP COLUMN ${q}${column}${q};`;
+  },
+
+  generateAddIndexSql: (engine: DatabaseEngine, table: string, idx: IndexDefinition): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const u = idx.is_unique ? 'UNIQUE ' : '';
+    const idxCols = idx.columns.map((col) => `${q}${col}${q}`).join(', ');
+    return `CREATE ${u}INDEX ${q}${idx.name}${q} ON ${q}${table}${q} (${idxCols});`;
+  },
+
+  generateDropIndexSql: (engine: DatabaseEngine, table: string, indexName: string): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    if (engine === 'mysql') {
+      return `ALTER TABLE ${q}${table}${q} DROP INDEX ${q}${indexName}${q};`;
+    }
+    return `DROP INDEX ${q}${indexName}${q};`;
+  },
+
+  generateTruncateTableSql: (engine: DatabaseEngine, table: string): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    if (engine === 'sqlite') {
+      return `DELETE FROM ${q}${table}${q};`;
+    }
+    return `TRUNCATE TABLE ${q}${table}${q};`;
+  },
+
+  generateDropTableSql: (engine: DatabaseEngine, table: string): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    return `DROP TABLE ${q}${table}${q};`;
+  },
+
+  generateSelectSnippet: (engine: DatabaseEngine, table: string): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    return `SELECT * FROM ${q}${table}${q} LIMIT 100;`;
+  },
+
+  generateInsertSnippet: (table: string, columns: ColumnMeta[]): string => {
+    const cols = columns.map((c) => c.name).join(', ');
+    const vals = columns.map((c) => (c.nullable ? 'NULL' : `'value'`)).join(', ');
+    return `INSERT INTO ${table} (${cols}) VALUES (${vals});`;
+  },
+
+  generateUpdateSnippet: (table: string, columns: ColumnMeta[]): string => {
+    const sets = columns
+      .filter((c) => !c.is_primary_key)
+      .map((c) => `${c.name} = 'value'`)
+      .join(', ');
+    const pk = columns.find((c) => c.is_primary_key)?.name || 'id';
+    return `UPDATE ${table} SET ${sets} WHERE ${pk} = 1;`;
+  },
+
+  generateDeleteSnippet: (table: string, columns: ColumnMeta[]): string => {
+    const pk = columns.find((c) => c.is_primary_key)?.name || 'id';
+    return `DELETE FROM ${table} WHERE ${pk} = 1;`;
+  },
 };

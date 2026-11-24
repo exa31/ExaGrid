@@ -1,6 +1,6 @@
 use std::time::Instant;
 use sqlx::{mysql::MySqlPoolOptions, Column, MySqlPool, Row, TypeInfo};
-use crate::drivers::{ColumnMeta, ConnectionConfig, PingResult, QueryResult, TableMeta};
+use crate::drivers::{ColumnMeta, ConnectionConfig, IndexMeta, PingResult, QueryResult, TableMeta};
 use crate::pkg::errors::AppError;
 
 pub struct MySqlDriver;
@@ -140,6 +140,71 @@ impl MySqlDriver {
             });
         }
         Ok(columns)
+    }
+
+    pub async fn get_indexes(pool: &MySqlPool, table: &str) -> Result<Vec<IndexMeta>, AppError> {
+        let clean_table = table.split('.').last().unwrap_or(table);
+        let sql = format!("SHOW INDEX FROM `{}`", clean_table.replace('`', "``"));
+        let rows = sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut index_map: std::collections::BTreeMap<String, (bool, bool, Option<String>, Vec<String>)> = std::collections::BTreeMap::new();
+
+        for row in rows {
+            let key_name: String = row.try_get::<String, _>("Key_name")
+                .or_else(|_| row.try_get::<String, _>("KEY_NAME"))
+                .or_else(|_| row.try_get::<Vec<u8>, _>("Key_name").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_default();
+            let col_name: String = row.try_get::<String, _>("Column_name")
+                .or_else(|_| row.try_get::<String, _>("COLUMN_NAME"))
+                .or_else(|_| row.try_get::<Vec<u8>, _>("Column_name").map(|b| String::from_utf8_lossy(&b).to_string()))
+                .unwrap_or_default();
+            let non_unique: i64 = row.try_get::<i64, _>("Non_unique")
+                .or_else(|_| row.try_get::<i32, _>("Non_unique").map(|i| i as i64))
+                .unwrap_or(1);
+            let idx_type: Option<String> = row.try_get::<String, _>("Index_type")
+                .or_else(|_| row.try_get::<String, _>("INDEX_TYPE"))
+                .ok();
+
+            let is_primary = key_name.to_uppercase() == "PRIMARY";
+            let is_unique = non_unique == 0;
+
+            let entry = index_map.entry(key_name).or_insert((is_unique, is_primary, idx_type, Vec::new()));
+            entry.3.push(col_name);
+        }
+
+        let mut indexes = Vec::new();
+        for (name, (is_unique, is_primary, index_type, columns)) in index_map {
+            indexes.push(IndexMeta {
+                name,
+                columns,
+                is_unique,
+                is_primary,
+                index_type,
+            });
+        }
+        Ok(indexes)
+    }
+
+    pub async fn get_ddl(pool: &MySqlPool, table: &str) -> Result<String, AppError> {
+        let clean_table = table.split('.').last().unwrap_or(table);
+        let sql = format!("SHOW CREATE TABLE `{}`", clean_table.replace('`', "``"));
+        let row = sqlx::query(&sql)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Column 0 is the table name, column 1 is the CREATE TABLE DDL statement
+        let ddl: String = row.try_get::<String, usize>(1)
+            .or_else(|_| row.try_get::<Vec<u8>, usize>(1).map(|b| String::from_utf8_lossy(&b).to_string()))
+            .or_else(|_| row.try_get::<String, _>("Create Table"))
+            .or_else(|_| row.try_get::<String, _>("CREATE TABLE"))
+            .or_else(|_| row.try_get::<Vec<u8>, _>("Create Table").map(|b| String::from_utf8_lossy(&b).to_string()))
+            .unwrap_or_default();
+
+        Ok(ddl)
     }
 
     pub async fn execute_query(pool: &MySqlPool, sql: &str) -> Result<QueryResult, AppError> {

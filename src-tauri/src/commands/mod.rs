@@ -8,7 +8,10 @@ use crate::drivers::mongodb::MongoDriver;
 use crate::drivers::mysql::MySqlDriver;
 use crate::drivers::postgres::PostgresDriver;
 use crate::drivers::sqlite::SqliteDriver;
-use crate::drivers::{ColumnMeta, ConnectionConfig, DatabaseEngine, PingResult, QueryResult, TableMeta};
+use crate::drivers::{
+    ColumnMeta, ConnectionConfig, DatabaseEngine, IndexMeta, PingResult, QueryResult, TableDdl,
+    TableMeta,
+};
 
 pub enum ActiveConnection {
     Postgres(sqlx::PgPool),
@@ -159,6 +162,70 @@ pub async fn get_table_columns(
             ])
         }
     }
+}
+
+#[tauri::command]
+pub async fn get_table_indexes(
+    state: State<'_, AppState>,
+    connection_id: String,
+    table: String,
+) -> Result<Vec<IndexMeta>, String> {
+    let pools = state.active_pools.read().await;
+    let conn = pools
+        .get(&connection_id)
+        .ok_or_else(|| "Database not connected. Please connect first.".to_string())?;
+
+    match conn {
+        ActiveConnection::Postgres(pool) => {
+            PostgresDriver::get_indexes(pool, &table).await.map_err(|e| e.to_string())
+        }
+        ActiveConnection::Mysql(pool) => {
+            MySqlDriver::get_indexes(pool, &table).await.map_err(|e| e.to_string())
+        }
+        ActiveConnection::Sqlite(pool) => {
+            SqliteDriver::get_indexes(pool, &table).await.map_err(|e| e.to_string())
+        }
+        ActiveConnection::Mongo(_) => {
+            Ok(vec![
+                IndexMeta {
+                    name: "_id_".into(),
+                    columns: vec!["_id".into()],
+                    is_unique: true,
+                    is_primary: true,
+                    index_type: Some("BTREE".into()),
+                }
+            ])
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_table_ddl(
+    state: State<'_, AppState>,
+    connection_id: String,
+    table: String,
+) -> Result<TableDdl, String> {
+    let pools = state.active_pools.read().await;
+    let conn = pools
+        .get(&connection_id)
+        .ok_or_else(|| "Database not connected. Please connect first.".to_string())?;
+
+    let ddl = match conn {
+        ActiveConnection::Postgres(pool) => {
+            PostgresDriver::get_ddl(pool, &table).await.map_err(|e| e.to_string())?
+        }
+        ActiveConnection::Mysql(pool) => {
+            MySqlDriver::get_ddl(pool, &table).await.map_err(|e| e.to_string())?
+        }
+        ActiveConnection::Sqlite(pool) => {
+            SqliteDriver::get_ddl(pool, &table).await.map_err(|e| e.to_string())?
+        }
+        ActiveConnection::Mongo(_) => {
+            format!("// MongoDB Collection: {}\n// Schemaless NoSQL collection", table)
+        }
+    };
+
+    Ok(TableDdl { table, ddl })
 }
 
 #[tauri::command]
