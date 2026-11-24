@@ -4,7 +4,9 @@ import {
   ChevronRight,
   FileJson,
   FileSpreadsheet,
+  PlusCircle,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -16,13 +18,21 @@ interface DataGridProps {
   result: QueryResult | null;
   loading: boolean;
   tableName?: string;
+  onOpenInsertRow?: () => void;
+  onDeleteRow?: (row: Record<string, any>) => void;
 }
 
 function generateExportFileName(tableName: string | undefined, format: 'csv' | 'json'): string {
   return `${tableName || 'query_export'}_${Date.now()}.${format}`;
 }
 
-export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
+export const DataGrid = ({
+  result,
+  loading,
+  tableName,
+  onOpenInsertRow,
+  onDeleteRow,
+}: DataGridProps) => {
   const [filterText, setFilterText] = useState('');
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState<boolean>(true);
@@ -121,6 +131,17 @@ export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
         </div>
 
         <div className="flex items-center space-x-1.5">
+          {onOpenInsertRow && (
+            <button
+              onClick={onOpenInsertRow}
+              title="Insert New Row into table"
+              className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-md transition shadow-xs cursor-pointer mr-1"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Insert Row</span>
+            </button>
+          )}
+
           <button
             onClick={() => handleExport('csv')}
             title="Export to CSV"
@@ -173,6 +194,11 @@ export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
                   </div>
                 </th>
               ))}
+              {onDeleteRow && (
+                <th className="w-12 px-2 py-2 text-center text-slate-500 font-normal border-r border-slate-800/80">
+                  Act
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
@@ -225,6 +251,17 @@ export const DataGrid = ({ result, loading, tableName }: DataGridProps) => {
                       </td>
                     );
                   })}
+                  {onDeleteRow && (
+                    <td className="px-2 py-1 text-center border-r border-slate-800/60">
+                      <button
+                        onClick={() => onDeleteRow(row)}
+                        title="Delete this row"
+                        className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

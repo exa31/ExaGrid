@@ -1,6 +1,8 @@
 import {
   FileCode,
+  KeyRound,
   Plus,
+  PlusCircle,
   RefreshCw,
   ShieldCheck,
   Zap,
@@ -11,6 +13,8 @@ import { AddColumnModal } from './components/AddColumnModal';
 import { AddIndexModal } from './components/AddIndexModal';
 import { ConnectionModal } from './components/ConnectionModal';
 import { DataGrid } from './components/DataGrid';
+import { EditColumnModal } from './components/EditColumnModal';
+import { InsertRowModal } from './components/InsertRowModal';
 import { ObjectExplorer } from './components/ObjectExplorer';
 import { QueryConsole } from './components/QueryConsole';
 import { Sidebar } from './components/Sidebar';
@@ -20,6 +24,7 @@ import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { tauriBridge } from './services/tauriBridge';
 import type {
   ColumnDefinition,
+  ColumnMeta,
   ConnectionConfig,
   IndexDefinition,
   StoredProfile,
@@ -56,7 +61,10 @@ export default function App() {
   const [editingProfile, setEditingProfile] = useState<ConnectionConfig | null>(null);
   const [isDesignerOpen, setIsDesignerOpen] = useState(false);
   const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
+  const [isEditColumnOpen, setIsEditColumnOpen] = useState(false);
+  const [editingColumn, setEditingColumn] = useState<ColumnMeta | null>(null);
   const [isAddIndexOpen, setIsAddIndexOpen] = useState(false);
+  const [isInsertRowOpen, setIsInsertRowOpen] = useState(false);
   const [targetTableForModal, setTargetTableForModal] = useState<string>('');
 
   useEffect(() => {
@@ -337,6 +345,73 @@ export default function App() {
     await handleRefreshActiveTable();
   };
 
+  const handleOpenEditColumn = (col: ColumnMeta) => {
+    setEditingColumn(col);
+    setTargetTableForModal(activeTab?.table || '');
+    setIsEditColumnOpen(true);
+  };
+
+  const handleEditColumn = async (oldColName: string, updatedCol: ColumnDefinition) => {
+    const table = targetTableForModal || activeTab?.table;
+    if (!table || !connectedProfileId) return;
+
+    const sql = tauriBridge.generateEditColumnSql(engine, table, oldColName, updatedCol);
+    await tauriBridge.executeQuery(
+      connectedProfileId,
+      sql,
+      connectedProfile?.database,
+      table
+    );
+    await handleRefreshActiveTable();
+    await loadTables(connectedProfileId);
+  };
+
+  const handleInsertRow = async (values: Record<string, any>) => {
+    const table = targetTableForModal || activeTab?.table;
+    if (!table || !connectedProfileId) return;
+
+    const sql = tauriBridge.generateInsertRowSql(engine, table, values);
+    await tauriBridge.executeQuery(
+      connectedProfileId,
+      sql,
+      connectedProfile?.database,
+      table
+    );
+    await handleRefreshActiveTable();
+  };
+
+  const handleDeleteRow = async (row: Record<string, any>) => {
+    const table = activeTab?.table;
+    if (!table || !connectedProfileId) return;
+
+    const pkCol =
+      activeTab?.columns?.find((c) => c.is_primary_key)?.name ||
+      Object.keys(row)[0];
+    const pkVal = row[pkCol];
+
+    if (pkVal === undefined || pkVal === null) {
+      alert(`Cannot delete row: no valid identifier found for column "${pkCol}"`);
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete this row where ${pkCol} = ${pkVal}?`)) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDeleteRowSql(engine, table, pkCol, pkVal);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        table
+      );
+      await handleRefreshActiveTable();
+    } catch (err: any) {
+      alert(`Failed to delete row: ${err.message || err}`);
+    }
+  };
+
   const handleDropColumn = async (colName: string) => {
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!tab?.table || !connectedProfileId) return;
@@ -499,7 +574,7 @@ export default function App() {
               <button
                 onClick={() => setIsDesignerOpen(true)}
                 title="Create New Table"
-                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition cursor-pointer"
               >
                 <Plus className="w-3 h-3 text-emerald-400" />
                 <span>New Table</span>
@@ -508,7 +583,7 @@ export default function App() {
               <button
                 onClick={() => handleNewQueryTab()}
                 title="Open New SQL Console"
-                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition cursor-pointer"
               >
                 <FileCode className="w-3 h-3 text-indigo-400" />
                 <span>SQL Console</span>
@@ -517,10 +592,55 @@ export default function App() {
               <button
                 onClick={() => loadTables(connectedProfile.id)}
                 title="Refresh All Tables"
-                className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-800 transition"
+                className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-800 transition cursor-pointer"
               >
                 <RefreshCw className={`w-3 h-3 ${loadingTables ? 'animate-spin text-indigo-400' : ''}`} />
               </button>
+
+              {/* Direct active table action buttons in top toolbar */}
+              {activeTab?.type === 'table' && activeTab?.table && (
+                <div className="flex items-center space-x-1 pl-2 ml-1 border-l border-slate-800">
+                  <span className="px-2 py-0.5 bg-slate-900 text-slate-400 font-mono text-[11px] rounded border border-slate-800 truncate max-w-32">
+                    {activeTab.table}
+                  </span>
+
+                  <button
+                    onClick={() => {
+                      setTargetTableForModal(activeTab.table || '');
+                      setIsAddColumnOpen(true);
+                    }}
+                    title={`Add Column to ${activeTab.table}`}
+                    className="px-2 py-1 bg-indigo-950/70 hover:bg-indigo-900/80 text-indigo-300 hover:text-white rounded-md text-xs font-medium border border-indigo-800/60 flex items-center space-x-1 transition cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3 text-indigo-400" />
+                    <span>Add Column</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTargetTableForModal(activeTab.table || '');
+                      setIsAddIndexOpen(true);
+                    }}
+                    title={`Add Index to ${activeTab.table}`}
+                    className="px-2 py-1 bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 hover:text-white rounded-md text-xs font-medium border border-amber-800/60 flex items-center space-x-1 transition cursor-pointer"
+                  >
+                    <KeyRound className="w-3 h-3 text-amber-400" />
+                    <span>Add Index</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTargetTableForModal(activeTab.table || '');
+                      setIsInsertRowOpen(true);
+                    }}
+                    title={`Insert Row into ${activeTab.table}`}
+                    className="px-2 py-1 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 hover:text-white rounded-md text-xs font-medium border border-emerald-800/60 flex items-center space-x-1 transition cursor-pointer"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Insert Row</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -564,10 +684,23 @@ export default function App() {
           engine={engine}
           tables={tables}
           loading={loadingTables}
+          connectedProfileId={connectedProfileId}
           onSelectTable={handleSelectTable}
           onOpenNewQuery={() => handleNewQueryTab()}
           onRefreshTables={() => connectedProfileId && loadTables(connectedProfileId)}
           onOpenCreateTable={() => setIsDesignerOpen(true)}
+          onOpenAddColumnForTable={(tbl) => {
+            setTargetTableForModal(tbl);
+            setIsAddColumnOpen(true);
+          }}
+          onOpenAddIndexForTable={(tbl) => {
+            setTargetTableForModal(tbl);
+            setIsAddIndexOpen(true);
+          }}
+          onOpenInsertRowForTable={(tbl) => {
+            setTargetTableForModal(tbl);
+            setIsInsertRowOpen(true);
+          }}
           onTruncateTable={handleTruncateTable}
           onDropTable={handleDropTable}
           onGenerateSql={(sql) => handleNewQueryTab(sql)}
@@ -616,10 +749,16 @@ export default function App() {
                   setTargetTableForModal(activeTab?.table || '');
                   setIsAddColumnOpen(true);
                 }}
+                onOpenEditColumn={handleOpenEditColumn}
                 onOpenAddIndex={() => {
                   setTargetTableForModal(activeTab?.table || '');
                   setIsAddIndexOpen(true);
                 }}
+                onOpenInsertRow={() => {
+                  setTargetTableForModal(activeTab?.table || '');
+                  setIsInsertRowOpen(true);
+                }}
+                onDeleteRow={handleDeleteRow}
                 onDropColumn={handleDropColumn}
                 onDropIndex={handleDropIndex}
                 onOpenInSqlEditor={(sql) => handleNewQueryTab(sql)}
@@ -653,12 +792,33 @@ export default function App() {
         onAdd={handleAddColumnToTable}
       />
 
+      <EditColumnModal
+        isOpen={isEditColumnOpen}
+        tableName={targetTableForModal}
+        engine={engine}
+        column={editingColumn}
+        onClose={() => {
+          setIsEditColumnOpen(false);
+          setEditingColumn(null);
+        }}
+        onSave={handleEditColumn}
+      />
+
       <AddIndexModal
         isOpen={isAddIndexOpen}
         tableName={targetTableForModal}
         columns={activeTab?.columns || []}
         onClose={() => setIsAddIndexOpen(false)}
         onAdd={handleAddIndexToTable}
+      />
+
+      <InsertRowModal
+        isOpen={isInsertRowOpen}
+        tableName={targetTableForModal}
+        columns={activeTab?.columns || []}
+        engine={engine}
+        onClose={() => setIsInsertRowOpen(false)}
+        onInsert={handleInsertRow}
       />
     </div>
   );

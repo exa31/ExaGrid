@@ -347,9 +347,90 @@ export const tauriBridge = {
     return `ALTER TABLE ${q}${table}${q} ADD COLUMN ${q}${col.name}${q} ${typeStr}${nullStr}${defStr};`;
   },
 
+  generateEditColumnSql: (
+    engine: DatabaseEngine,
+    table: string,
+    oldName: string,
+    col: ColumnDefinition
+  ): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    let typeStr = col.data_type.toUpperCase();
+    if (col.length_or_precision) {
+      typeStr = `${typeStr}(${col.length_or_precision})`;
+    }
+    const nullStr = col.nullable ? ' NULL' : ' NOT NULL';
+    const defStr = col.default_value ? ` DEFAULT ${col.default_value}` : '';
+
+    if (engine === 'mysql') {
+      return `ALTER TABLE ${q}${table}${q} CHANGE COLUMN ${q}${oldName}${q} ${q}${col.name}${q} ${typeStr}${nullStr}${defStr};`;
+    }
+
+    if (engine === 'postgres') {
+      const statements: string[] = [];
+      if (oldName !== col.name) {
+        statements.push(`ALTER TABLE ${q}${table}${q} RENAME COLUMN ${q}${oldName}${q} TO ${q}${col.name}${q};`);
+      }
+      statements.push(`ALTER TABLE ${q}${table}${q} ALTER COLUMN ${q}${col.name}${q} TYPE ${typeStr};`);
+      if (col.nullable) {
+        statements.push(`ALTER TABLE ${q}${table}${q} ALTER COLUMN ${q}${col.name}${q} DROP NOT NULL;`);
+      } else {
+        statements.push(`ALTER TABLE ${q}${table}${q} ALTER COLUMN ${q}${col.name}${q} SET NOT NULL;`);
+      }
+      if (col.default_value) {
+        statements.push(`ALTER TABLE ${q}${table}${q} ALTER COLUMN ${q}${col.name}${q} SET DEFAULT ${col.default_value};`);
+      }
+      return statements.join('\n');
+    }
+
+    // SQLite
+    if (oldName !== col.name) {
+      return `ALTER TABLE ${q}${table}${q} RENAME COLUMN ${q}${oldName}${q} TO ${q}${col.name}${q};`;
+    }
+    return `-- SQLite: In-place column alteration is not natively supported without recreation.`;
+  },
+
   generateDropColumnSql: (engine: DatabaseEngine, table: string, column: string): string => {
     const q = engine === 'mysql' ? '`' : '"';
     return `ALTER TABLE ${q}${table}${q} DROP COLUMN ${q}${column}${q};`;
+  },
+
+  generateInsertRowSql: (
+    engine: DatabaseEngine,
+    table: string,
+    values: Record<string, any>
+  ): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const colNames = Object.keys(values).filter((k) => values[k] !== undefined && values[k] !== '');
+    if (colNames.length === 0) {
+      return `INSERT INTO ${q}${table}${q} DEFAULT VALUES;`;
+    }
+
+    const colsStr = colNames.map((c) => `${q}${c}${q}`).join(', ');
+    const valsStr = colNames
+      .map((c) => {
+        const val = values[c];
+        if (val === null || val === 'NULL' || val === undefined) return 'NULL';
+        if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+        const escaped = String(val).replace(/'/g, "''");
+        return `'${escaped}'`;
+      })
+      .join(', ');
+
+    return `INSERT INTO ${q}${table}${q} (${colsStr}) VALUES (${valsStr});`;
+  },
+
+  generateDeleteRowSql: (
+    engine: DatabaseEngine,
+    table: string,
+    pkCol: string,
+    pkVal: any
+  ): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const valStr =
+      typeof pkVal === 'number'
+        ? String(pkVal)
+        : `'${String(pkVal).replace(/'/g, "''")}'`;
+    return `DELETE FROM ${q}${table}${q} WHERE ${q}${pkCol}${q} = ${valStr};`;
   },
 
   generateAddIndexSql: (engine: DatabaseEngine, table: string, idx: IndexDefinition): string => {

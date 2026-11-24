@@ -6,7 +6,9 @@ import {
   FileCode,
   Key,
   KeyRound,
+  Pencil,
   Plus,
+  PlusCircle,
   RefreshCw,
   Table2,
   Trash2,
@@ -34,7 +36,10 @@ interface TableStructureViewProps {
   loading: boolean;
   onRefresh: () => void;
   onOpenAddColumn: () => void;
+  onOpenEditColumn: (col: ColumnMeta) => void;
   onOpenAddIndex: () => void;
+  onOpenInsertRow: () => void;
+  onDeleteRow?: (row: Record<string, any>) => void;
   onDropColumn: (colName: string) => void;
   onDropIndex: (indexName: string) => void;
   onOpenInSqlEditor: (sql: string) => void;
@@ -52,7 +57,10 @@ export const TableStructureView = ({
   loading,
   onRefresh,
   onOpenAddColumn,
+  onOpenEditColumn,
   onOpenAddIndex,
+  onOpenInsertRow,
+  onDeleteRow,
   onDropColumn,
   onDropIndex,
   onOpenInSqlEditor,
@@ -126,10 +134,20 @@ export const TableStructureView = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          {subView === 'data' && (
+            <button
+              onClick={onOpenInsertRow}
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1 cursor-pointer"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Insert Row</span>
+            </button>
+          )}
+
           {subView === 'structure' && (
             <button
               onClick={onOpenAddColumn}
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1"
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1 cursor-pointer"
             >
               <Plus className="w-3 h-3" />
               <span>Add Column</span>
@@ -187,7 +205,13 @@ export const TableStructureView = ({
       {/* Main Content per Sub-View */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {subView === 'data' && (
-          <DataGrid result={result} loading={loading} tableName={tableName} />
+          <DataGrid
+            result={result}
+            loading={loading}
+            tableName={tableName}
+            onOpenInsertRow={onOpenInsertRow}
+            onDeleteRow={onDeleteRow}
+          />
         )}
 
         {subView === 'structure' && (
@@ -245,6 +269,13 @@ export const TableStructureView = ({
                           )}
                         </td>
                         <td className="py-2.5 px-4 text-right">
+                          <button
+                            onClick={() => onOpenEditColumn(col)}
+                            title={`Edit column ${col.name}`}
+                            className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-indigo-950/30 transition mr-1 cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
                           <button
                             onClick={() => onDropColumn(col.name)}
                             disabled={col.is_primary_key}
