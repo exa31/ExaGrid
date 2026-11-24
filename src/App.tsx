@@ -1,6 +1,8 @@
 import {
   Activity,
   FileCode,
+  FileDown,
+  History,
   KeyRound,
   Plus,
   PlusCircle,
@@ -8,6 +10,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Upload,
+  Wrench,
   Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -17,6 +20,8 @@ import { AddForeignKeyModal } from './components/AddForeignKeyModal';
 import { AddIndexModal } from './components/AddIndexModal';
 import { CloneTableModal } from './components/CloneTableModal';
 import { ConnectionModal } from './components/ConnectionModal';
+import { CreateDatabaseModal } from './components/CreateDatabaseModal';
+import { DatabaseDumpModal } from './components/DatabaseDumpModal';
 import { DataGrid } from './components/DataGrid';
 import { DataImportModal } from './components/DataImportModal';
 import { EditColumnModal } from './components/EditColumnModal';
@@ -24,11 +29,14 @@ import { InsertRowModal } from './components/InsertRowModal';
 import { ObjectExplorer } from './components/ObjectExplorer';
 import { ProcessListModal } from './components/ProcessListModal';
 import { QueryConsole } from './components/QueryConsole';
+import { QueryHistoryModal } from './components/QueryHistoryModal';
 import { ServerVariablesModal } from './components/ServerVariablesModal';
 import { Sidebar } from './components/Sidebar';
 import { TableDesignerModal } from './components/TableDesignerModal';
+import { TableMaintenanceModal } from './components/TableMaintenanceModal';
 import { TableStructureView } from './components/TableStructureView';
 import { WorkspaceTabs } from './components/WorkspaceTabs';
+import { historyService } from './services/historyService';
 import { tauriBridge } from './services/tauriBridge';
 import type {
   ColumnDefinition,
@@ -78,6 +86,10 @@ export default function App() {
   const [isCloneTableOpen, setIsCloneTableOpen] = useState(false);
   const [isImportDataOpen, setIsImportDataOpen] = useState(false);
   const [isServerVariablesOpen, setIsServerVariablesOpen] = useState(false);
+  const [isCreateDatabaseOpen, setIsCreateDatabaseOpen] = useState(false);
+  const [isDatabaseDumpOpen, setIsDatabaseDumpOpen] = useState(false);
+  const [isQueryHistoryOpen, setIsQueryHistoryOpen] = useState(false);
+  const [isTableMaintenanceOpen, setIsTableMaintenanceOpen] = useState(false);
   const [isInsertRowOpen, setIsInsertRowOpen] = useState(false);
   const [targetTableForModal, setTargetTableForModal] = useState<string>('');
 
@@ -318,6 +330,7 @@ export default function App() {
       prev.map((t) => (t.id === activeTabId ? { ...t, loading: true, error: null } : t))
     );
 
+    const startTime = Date.now();
     try {
       const activeTab = tabs.find((t) => t.id === activeTabId);
       const res = await tauriBridge.executeQuery(
@@ -327,12 +340,26 @@ export default function App() {
         activeTab?.table || tables[0]?.name,
         100
       );
+      historyService.addHistory({
+        sql: queryStr,
+        duration_ms: Date.now() - startTime,
+        rows_affected: res.affected_rows,
+        status: 'success',
+        database: connectedProfile?.database,
+      });
       setTabs((prev) =>
         prev.map((t) =>
           t.id === activeTabId ? { ...t, queryResult: res, loading: false, error: null } : t
         )
       );
     } catch (err: any) {
+      historyService.addHistory({
+        sql: queryStr,
+        duration_ms: Date.now() - startTime,
+        status: 'error',
+        error_message: err.message || 'Query execution error',
+        database: connectedProfile?.database,
+      });
       setTabs((prev) =>
         prev.map((t) =>
           t.id === activeTabId
@@ -713,6 +740,30 @@ export default function App() {
     return count;
   };
 
+  const handleCreateDatabase = async (name: string, charset: string, collation: string) => {
+    if (!connectedProfileId) return;
+    await tauriBridge.createDatabase(connectedProfileId, engine, name, charset, collation);
+    await loadTables(connectedProfileId);
+  };
+
+  const handleDropDatabase = async (dbName: string) => {
+    if (!connectedProfileId) return;
+    if (
+      !confirm(
+        `Are you sure you want to permanently DROP database '${dbName}'?\nThis will destroy all tables and data inside it!`
+      )
+    ) {
+      return;
+    }
+    try {
+      await tauriBridge.dropDatabase(connectedProfileId, engine, dbName);
+      setTables([]);
+      await loadTables(connectedProfileId);
+    } catch (err: any) {
+      alert(`Failed to drop database: ${err.message || err}`);
+    }
+  };
+
   const handleCreateTableFromDesigner = async (newTableName: string) => {
     if (!connectedProfileId) return;
     await loadTables(connectedProfileId);
@@ -807,6 +858,24 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setIsQueryHistoryOpen(true)}
+                title="Query Execution History & Saved Snippets Library"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition cursor-pointer"
+              >
+                <History className="w-3 h-3 text-amber-400" />
+                <span>History</span>
+              </button>
+
+              <button
+                onClick={() => setIsDatabaseDumpOpen(true)}
+                title="Dump & Backup Database to SQL"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition cursor-pointer"
+              >
+                <FileDown className="w-3 h-3 text-emerald-400" />
+                <span>Dump SQL</span>
+              </button>
+
+              <button
                 onClick={() => loadTables(connectedProfile.id)}
                 title="Refresh All Tables"
                 className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-800 transition cursor-pointer"
@@ -867,6 +936,18 @@ export default function App() {
                   >
                     <Upload className="w-3 h-3 text-sky-400" />
                     <span>Import</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTargetTableForModal(activeTab.table || '');
+                      setIsTableMaintenanceOpen(true);
+                    }}
+                    title={`Maintain & Optimize ${activeTab.table}`}
+                    className="px-2 py-1 bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 hover:text-white rounded-md text-xs font-medium border border-amber-800/60 flex items-center space-x-1 transition cursor-pointer"
+                  >
+                    <Wrench className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Maintain</span>
                   </button>
                 </div>
               )}
@@ -940,6 +1021,13 @@ export default function App() {
             setIsImportDataOpen(true);
           }}
           onOpenServerVariables={() => setIsServerVariablesOpen(true)}
+          onOpenCreateDatabase={() => setIsCreateDatabaseOpen(true)}
+          onDropDatabase={handleDropDatabase}
+          onOpenDatabaseDump={() => setIsDatabaseDumpOpen(true)}
+          onOpenTableMaintenance={(tbl) => {
+            setTargetTableForModal(tbl);
+            setIsTableMaintenanceOpen(true);
+          }}
           onOpenEditColumnForTable={(tbl, col) => {
             setTargetTableForModal(tbl);
             setEditingColumn(col);
@@ -969,6 +1057,7 @@ export default function App() {
                   initialQuery={activeTab.query}
                   onExecute={handleExecuteQuery}
                   onExplain={handleExplainQuery}
+                  onOpenHistory={() => setIsQueryHistoryOpen(true)}
                   loading={activeTab.loading || false}
                   result={activeTab.queryResult || null}
                   error={activeTab.error || null}
@@ -1131,6 +1220,38 @@ export default function App() {
         engine={engine}
         database={connectedProfile?.database}
         onClose={() => setIsServerVariablesOpen(false)}
+      />
+
+      <CreateDatabaseModal
+        isOpen={isCreateDatabaseOpen}
+        engine={engine}
+        onClose={() => setIsCreateDatabaseOpen(false)}
+        onCreate={handleCreateDatabase}
+      />
+
+      <DatabaseDumpModal
+        isOpen={isDatabaseDumpOpen}
+        databaseName={connectedProfile?.database}
+        tables={tables}
+        engine={engine}
+        connectionId={connectedProfileId}
+        onClose={() => setIsDatabaseDumpOpen(false)}
+        onOpenInEditor={(sql) => handleNewQueryTab(sql)}
+      />
+
+      <QueryHistoryModal
+        isOpen={isQueryHistoryOpen}
+        onClose={() => setIsQueryHistoryOpen(false)}
+        onOpenQueryInEditor={(sql) => handleNewQueryTab(sql)}
+      />
+
+      <TableMaintenanceModal
+        isOpen={isTableMaintenanceOpen}
+        tableName={targetTableForModal}
+        engine={engine}
+        connectionId={connectedProfileId}
+        database={connectedProfile?.database}
+        onClose={() => setIsTableMaintenanceOpen(false)}
       />
     </div>
   );

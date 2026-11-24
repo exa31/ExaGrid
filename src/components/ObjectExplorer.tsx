@@ -6,7 +6,9 @@ import {
   Code2,
   Columns3,
   Copy,
+  Database,
   FileCode,
+  FileDown,
   FolderTree,
   GitFork,
   Key,
@@ -23,6 +25,7 @@ import {
   Table2,
   Trash2,
   Upload,
+  Wrench,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -49,6 +52,10 @@ interface ObjectExplorerProps {
   onOpenCreateTable: () => void;
   onOpenProcessList?: () => void;
   onOpenServerVariables?: () => void;
+  onOpenCreateDatabase?: () => void;
+  onDropDatabase?: (dbName: string) => void;
+  onOpenDatabaseDump?: () => void;
+  onOpenTableMaintenance?: (tableName: string) => void;
   onOpenCloneTable?: (tableName: string) => void;
   onOpenImportData?: (tableName: string) => void;
   onOpenAddColumnForTable?: (tableName: string) => void;
@@ -75,6 +82,10 @@ export const ObjectExplorer = ({
   onOpenCreateTable,
   onOpenProcessList,
   onOpenServerVariables,
+  onOpenCreateDatabase,
+  onDropDatabase,
+  onOpenDatabaseDump,
+  onOpenTableMaintenance,
   onOpenCloneTable,
   onOpenImportData,
   onOpenAddColumnForTable,
@@ -213,6 +224,24 @@ export const ObjectExplorer = ({
                 },
               ]
             : []),
+          ...(onOpenTableMaintenance
+            ? [
+                {
+                  label: 'Maintenance Tools (Analyze/Optimize)...',
+                  icon: <Wrench className="w-3.5 h-3.5 text-amber-400" />,
+                  onClick: () => onOpenTableMaintenance(tableName),
+                },
+              ]
+            : []),
+          ...(onOpenDatabaseDump
+            ? [
+                {
+                  label: 'Export Table as SQL Dump...',
+                  icon: <FileDown className="w-3.5 h-3.5 text-emerald-400" />,
+                  onClick: onOpenDatabaseDump,
+                },
+              ]
+            : []),
         ],
       },
       {
@@ -261,11 +290,29 @@ export const ObjectExplorer = ({
             icon: <Plus className="w-3.5 h-3.5 text-emerald-400" />,
             onClick: onOpenCreateTable,
           },
+          ...(onOpenCreateDatabase
+            ? [
+                {
+                  label: 'Create New Database...',
+                  icon: <Database className="w-3.5 h-3.5 text-indigo-400" />,
+                  onClick: onOpenCreateDatabase,
+                },
+              ]
+            : []),
           {
             label: 'New SQL Console',
             icon: <FileCode className="w-3.5 h-3.5 text-indigo-400" />,
             onClick: onOpenNewQuery,
           },
+          ...(onOpenDatabaseDump
+            ? [
+                {
+                  label: 'Dump / Export Database (SQL)...',
+                  icon: <FileDown className="w-3.5 h-3.5 text-emerald-400" />,
+                  onClick: onOpenDatabaseDump,
+                },
+              ]
+            : []),
           ...(onOpenProcessList
             ? [
                 {
@@ -291,6 +338,20 @@ export const ObjectExplorer = ({
           },
         ],
       },
+      ...(onDropDatabase && databaseName
+        ? [
+            {
+              items: [
+                {
+                  label: `Drop Database '${databaseName}'`,
+                  icon: <Trash2 className="w-3.5 h-3.5 text-rose-400" />,
+                  danger: true,
+                  onClick: () => onDropDatabase(databaseName),
+                },
+              ],
+            },
+          ]
+        : []),
     ];
 
     setContextMenu({ x, y, sections });

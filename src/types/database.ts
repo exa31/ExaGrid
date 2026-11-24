@@ -141,6 +141,41 @@ export interface ServerVariable {
   value: string;
 }
 
+export interface QueryHistoryItem {
+  id: string;
+  sql: string;
+  timestamp: number;
+  duration_ms: number;
+  rows_affected?: number;
+  status: 'success' | 'error';
+  error_message?: string;
+  database?: string;
+}
+
+export interface SqlSnippet {
+  id: string;
+  title: string;
+  description?: string;
+  sql: string;
+  category?: string;
+}
+
+export type MaintenanceOperation = 'ANALYZE' | 'OPTIMIZE' | 'CHECK' | 'REPAIR';
+
+export interface MaintenanceResult {
+  table: string;
+  operation: string;
+  msg_type: string;
+  msg_text: string;
+}
+
+export interface DumpOptions {
+  includeStructure: boolean;
+  includeData: boolean;
+  addDropTable: boolean;
+  selectedTables: string[];
+}
+
 export type TableTabSubView =
   | 'data'
   | 'structure'

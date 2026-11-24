@@ -19,6 +19,7 @@ interface QueryConsoleProps {
   initialQuery?: string;
   onExecute: (query: string) => Promise<void>;
   onExplain?: (query: string) => Promise<void>;
+  onOpenHistory?: () => void;
   loading: boolean;
   result: QueryResult | null;
   error: string | null;
@@ -29,6 +30,7 @@ export const QueryConsole = ({
   initialQuery = 'SELECT * FROM users LIMIT 50;',
   onExecute,
   onExplain,
+  onOpenHistory,
   loading,
   result,
   error,
@@ -168,6 +170,17 @@ export const QueryConsole = ({
             <Sparkles className="w-3 h-3 text-indigo-400" />
             <span>Format</span>
           </button>
+
+          {onOpenHistory && (
+            <button
+              onClick={onOpenHistory}
+              title="Query Execution History & Saved Snippets Library"
+              className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-amber-300 hover:text-white hover:bg-amber-950/40 border border-amber-900/40 rounded-md transition cursor-pointer"
+            >
+              <History className="w-3.5 h-3.5 text-amber-400" />
+              <span>History</span>
+            </button>
+          )}
 
           {/* Snippets / Templates Dropdown */}
           <div className="relative">

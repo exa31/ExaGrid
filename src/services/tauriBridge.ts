@@ -7,6 +7,8 @@ import type {
   ForeignKeyMeta,
   IndexDefinition,
   IndexMeta,
+  MaintenanceOperation,
+  MaintenanceResult,
   PingResult,
   ProcessInfo,
   QueryResult,
@@ -859,5 +861,189 @@ export const tauriBridge = {
     }
 
     return inserted;
+  },
+
+  listDatabases: async (connectionId: string, engine: DatabaseEngine): Promise<string[]> => {
+    if (engine === 'sqlite') return ['main'];
+    if (engine === 'postgres') {
+      const res = await tauriBridge.executeQuery(
+        connectionId,
+        'SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;'
+      );
+      return res.rows.map((r) => r.datname || r.DATNAME).filter(Boolean);
+    }
+    // mysql
+    const res = await tauriBridge.executeQuery(connectionId, 'SHOW DATABASES;');
+    return res.rows
+      .map((r) => r.Database || r.database || Object.values(r)[0])
+      .filter(Boolean) as string[];
+  },
+
+  createDatabase: async (
+    connectionId: string,
+    engine: DatabaseEngine,
+    name: string,
+    charset = 'utf8mb4',
+    collation = 'utf8mb4_unicode_ci'
+  ): Promise<void> => {
+    if (engine === 'mysql') {
+      await tauriBridge.executeQuery(
+        connectionId,
+        `CREATE DATABASE \`${name}\` CHARACTER SET ${charset} COLLATE ${collation};`
+      );
+    } else if (engine === 'postgres') {
+      await tauriBridge.executeQuery(connectionId, `CREATE DATABASE "${name}";`);
+    } else {
+      throw new Error('Creating separate database schemas is not supported on SQLite.');
+    }
+  },
+
+  dropDatabase: async (connectionId: string, engine: DatabaseEngine, name: string): Promise<void> => {
+    if (engine === 'mysql') {
+      await tauriBridge.executeQuery(connectionId, `DROP DATABASE \`${name}\`;`);
+    } else if (engine === 'postgres') {
+      await tauriBridge.executeQuery(connectionId, `DROP DATABASE "${name}";`);
+    } else {
+      throw new Error('Dropping database is not supported on SQLite.');
+    }
+  },
+
+  executeMaintenance: async (
+    connectionId: string,
+    engine: DatabaseEngine,
+    table: string,
+    op: MaintenanceOperation,
+    database?: string
+  ): Promise<MaintenanceResult[]> => {
+    if (engine === 'mysql') {
+      const q = `\`${table}\``;
+      const res = await tauriBridge.executeQuery(connectionId, `${op} TABLE ${q};`, database, table);
+      return res.rows.map((r) => ({
+        table: r.Table || r.table || table,
+        operation: r.Op || r.op || op,
+        msg_type: r.Msg_type || r.msg_type || 'status',
+        msg_text: r.Msg_text || r.msg_text || 'OK',
+      }));
+    }
+    if (engine === 'postgres') {
+      const sql = op === 'CHECK' ? `SELECT count(*) FROM "${table}";` : `VACUUM (ANALYZE) "${table}";`;
+      await tauriBridge.executeQuery(connectionId, sql, database, table);
+      return [
+        {
+          table,
+          operation: op,
+          msg_type: 'status',
+          msg_text: `${op} executed successfully on PostgreSQL table "${table}"`,
+        },
+      ];
+    }
+    // sqlite
+    const sql = op === 'ANALYZE' ? `ANALYZE "${table}";` : `PRAGMA integrity_check("${table}");`;
+    const res = await tauriBridge.executeQuery(connectionId, sql, database, table);
+    return [
+      {
+        table,
+        operation: op,
+        msg_type: 'status',
+        msg_text: res.rows[0] ? String(Object.values(res.rows[0])[0]) : 'OK',
+      },
+    ];
+  },
+
+  generateDumpSql: async (
+    connectionId: string,
+    engine: DatabaseEngine,
+    tables: string[],
+    options: { includeStructure: boolean; includeData: boolean; addDropTable: boolean },
+    database?: string,
+    onProgress?: (progressText: string) => void
+  ): Promise<string> => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const lines: string[] = [];
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    lines.push('-- ========================================================');
+    lines.push('-- ExaGrid SQL Dump');
+    lines.push(`-- Database: ${database || 'default'}`);
+    lines.push(`-- Engine: ${engine.toUpperCase()}`);
+    lines.push(`-- Generation Time: ${timestamp}`);
+    lines.push('-- ========================================================\n');
+
+    if (engine === 'mysql') {
+      lines.push('SET NAMES utf8mb4;');
+      lines.push('SET FOREIGN_KEY_CHECKS = 0;\n');
+    }
+
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i];
+      if (onProgress) {
+        onProgress(`Processing table ${i + 1}/${tables.length}: ${table}...`);
+      }
+
+      lines.push('-- --------------------------------------------------------');
+      lines.push(`-- Table structure & data for table ${q}${table}${q}`);
+      lines.push('-- --------------------------------------------------------\n');
+
+      if (options.addDropTable) {
+        lines.push(`DROP TABLE IF EXISTS ${q}${table}${q};`);
+      }
+
+      if (options.includeStructure) {
+        try {
+          const ddlObj = await tauriBridge.getTableDdl(connectionId, table);
+          let ddl = ddlObj.ddl.trim();
+          if (!ddl.endsWith(';')) ddl += ';';
+          lines.push(`${ddl}\n`);
+        } catch (e: any) {
+          lines.push(`-- Failed to generate DDL for ${table}: ${e.message || e}\n`);
+        }
+      }
+
+      if (options.includeData) {
+        try {
+          const queryResult = await tauriBridge.executeQuery(
+            connectionId,
+            `SELECT * FROM ${q}${table}${q};`,
+            database,
+            table
+          );
+          const {rows} = queryResult;
+          const columns = queryResult.columns.map((c) => c.name);
+
+          if (rows.length > 0 && columns.length > 0) {
+            lines.push(`-- Dumping data for table ${q}${table}${q} (${rows.length} rows)`);
+            const colsHeader = columns.map((c) => `${q}${c}${q}`).join(', ');
+            const chunkSize = 100;
+
+            for (let r = 0; r < rows.length; r += chunkSize) {
+              const chunk = rows.slice(r, r + chunkSize);
+              const valuesList = chunk.map((row) => {
+                const vals = columns.map((col) => {
+                  const val = row[col];
+                  if (val === null || val === undefined) return 'NULL';
+                  if (typeof val === 'number') return String(val);
+                  if (typeof val === 'boolean') return val ? '1' : '0';
+                  const esc = String(val).replace(/'/g, "''");
+                  return `'${esc}'`;
+                });
+                return `(${vals.join(', ')})`;
+              });
+
+              lines.push(`INSERT INTO ${q}${table}${q} (${colsHeader}) VALUES\n  ${valuesList.join(',\n  ')};`);
+            }
+            lines.push('');
+          }
+        } catch (e: any) {
+          lines.push(`-- Failed to dump data for ${table}: ${e.message || e}\n`);
+        }
+      }
+    }
+
+    if (engine === 'mysql') {
+      lines.push('SET FOREIGN_KEY_CHECKS = 1;');
+    }
+    lines.push('-- Dump completed --');
+
+    return lines.join('\n');
   },
 };
