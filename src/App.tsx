@@ -141,7 +141,9 @@ export default function App() {
 
     const newTabId = `table-tab-${Date.now()}`;
     const initialQuery =
-      engine === 'mongo' ? `{}` : `SELECT * FROM ${tableName} LIMIT 50;`;
+      engine === 'mongo'
+        ? `{}`
+        : tauriBridge.generateSelectSnippet(engine, tableName);
 
     const newTab: TabItem = {
       id: newTabId,
@@ -409,6 +411,94 @@ export default function App() {
       await handleRefreshActiveTable();
     } catch (err: any) {
       alert(`Failed to delete row: ${err.message || err}`);
+    }
+  };
+
+  const handleUpdateCell = async (
+    row: Record<string, any>,
+    colName: string,
+    newValue: any
+  ) => {
+    const table = activeTab?.table;
+    if (!table || !connectedProfileId) return;
+
+    const pkCol =
+      activeTab?.columns?.find((c) => c.is_primary_key)?.name ||
+      Object.keys(row)[0];
+    const pkVal = row[pkCol];
+
+    if (pkVal === undefined || pkVal === null) {
+      alert(`Cannot update cell: no primary key found on column "${pkCol}"`);
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateUpdateCellSql(
+        engine,
+        table,
+        pkCol,
+        pkVal,
+        colName,
+        newValue
+      );
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        table
+      );
+      await handleRefreshActiveTable();
+    } catch (err: any) {
+      alert(`Cell update failed: ${err.message || err}`);
+    }
+  };
+
+  const handleDropColumnForTable = async (tableName: string, colName: string) => {
+    if (!connectedProfileId) return;
+    if (
+      !confirm(
+        `Are you sure you want to drop column "${colName}" from table "${tableName}"?\nThis cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDropColumnSql(engine, tableName, colName);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        tableName
+      );
+      if (activeTab?.table === tableName) {
+        await handleRefreshActiveTable();
+      }
+      await loadTables(connectedProfileId);
+    } catch (err: any) {
+      alert(`Failed to drop column: ${err.message || err}`);
+    }
+  };
+
+  const handleDropIndexForTable = async (tableName: string, indexName: string) => {
+    if (!connectedProfileId) return;
+    if (!confirm(`Are you sure you want to drop index "${indexName}" from table "${tableName}"?`)) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDropIndexSql(engine, tableName, indexName);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        tableName
+      );
+      if (activeTab?.table === tableName) {
+        await handleRefreshActiveTable();
+      }
+    } catch (err: any) {
+      alert(`Failed to drop index: ${err.message || err}`);
     }
   };
 
@@ -701,6 +791,13 @@ export default function App() {
             setTargetTableForModal(tbl);
             setIsInsertRowOpen(true);
           }}
+          onOpenEditColumnForTable={(tbl, col) => {
+            setTargetTableForModal(tbl);
+            setEditingColumn(col);
+            setIsEditColumnOpen(true);
+          }}
+          onDropColumnForTable={handleDropColumnForTable}
+          onDropIndexForTable={handleDropIndexForTable}
           onTruncateTable={handleTruncateTable}
           onDropTable={handleDropTable}
           onGenerateSql={(sql) => handleNewQueryTab(sql)}
@@ -759,6 +856,7 @@ export default function App() {
                   setIsInsertRowOpen(true);
                 }}
                 onDeleteRow={handleDeleteRow}
+                onUpdateCell={handleUpdateCell}
                 onDropColumn={handleDropColumn}
                 onDropIndex={handleDropIndex}
                 onOpenInSqlEditor={(sql) => handleNewQueryTab(sql)}

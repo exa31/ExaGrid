@@ -433,6 +433,32 @@ export const tauriBridge = {
     return `DELETE FROM ${q}${table}${q} WHERE ${q}${pkCol}${q} = ${valStr};`;
   },
 
+  generateUpdateCellSql: (
+    engine: DatabaseEngine,
+    table: string,
+    pkCol: string,
+    pkVal: any,
+    targetCol: string,
+    newVal: any
+  ): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const pkStr =
+      typeof pkVal === 'number'
+        ? String(pkVal)
+        : `'${String(pkVal).replace(/'/g, "''")}'`;
+
+    let valStr = 'NULL';
+    if (newVal !== null && newVal !== undefined) {
+      if (typeof newVal === 'number' || typeof newVal === 'boolean') {
+        valStr = String(newVal);
+      } else {
+        valStr = `'${String(newVal).replace(/'/g, "''")}'`;
+      }
+    }
+
+    return `UPDATE ${q}${table}${q} SET ${q}${targetCol}${q} = ${valStr} WHERE ${q}${pkCol}${q} = ${pkStr};`;
+  },
+
   generateAddIndexSql: (engine: DatabaseEngine, table: string, idx: IndexDefinition): string => {
     const q = engine === 'mysql' ? '`' : '"';
     const u = idx.is_unique ? 'UNIQUE ' : '';

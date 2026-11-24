@@ -20,6 +20,7 @@ interface DataGridProps {
   tableName?: string;
   onOpenInsertRow?: () => void;
   onDeleteRow?: (row: Record<string, any>) => void;
+  onUpdateCell?: (row: Record<string, any>, colName: string, newValue: any) => Promise<void>;
 }
 
 function generateExportFileName(tableName: string | undefined, format: 'csv' | 'json'): string {
@@ -32,12 +33,18 @@ export const DataGrid = ({
   tableName,
   onOpenInsertRow,
   onDeleteRow,
+  onUpdateCell,
 }: DataGridProps) => {
   const [filterText, setFilterText] = useState('');
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
+  const [editingCell, setEditingCell] = useState<{
+    rowIdx: number;
+    colName: string;
+    value: string;
+  } | null>(null);
 
   const [inspectorCell, setInspectorCell] = useState<{ title: string; value: any } | null>(null);
 
@@ -50,13 +57,22 @@ export const DataGrid = ({
     );
   }
 
-  if (!result || result.rows.length === 0) {
+  if (!result || result.columns.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-500">
-        <p className="text-sm font-medium text-slate-400">No data to display</p>
-        <p className="text-xs text-slate-600 mt-1">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-500 space-y-3">
+        <p className="text-sm font-medium text-slate-400">No data or table selected</p>
+        <p className="text-xs text-slate-600">
           Execute a query above or click a table in the explorer to view records.
         </p>
+        {onOpenInsertRow && (
+          <button
+            onClick={onOpenInsertRow}
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium flex items-center space-x-1.5 transition cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Insert Record</span>
+          </button>
+        )}
       </div>
     );
   }
@@ -202,69 +218,144 @@ export const DataGrid = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
-            {paginatedRows.map((row, rowIdx) => {
-              const actualRowIndex = (page - 1) * pageSize + rowIdx + 1;
-              return (
-                <tr
-                  key={rowIdx}
-                  className="hover:bg-slate-900/70 transition group"
+            {paginatedRows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={columns.length + (onDeleteRow ? 2 : 1)}
+                  className="py-12 text-center text-slate-500"
                 >
-                  <td className="px-3 py-1.5 text-center text-slate-600 text-[11px] border-r border-slate-800/60 select-none">
-                    {actualRowIndex}
-                  </td>
-                  {columns.map((col) => {
-                    const cellVal = row[col.name];
-                    const isNull = cellVal === null || cellVal === undefined;
-                    const isObj = typeof cellVal === 'object' && !isNull;
-
-                    return (
-                      <td
-                        key={col.name}
-                        onClick={() =>
-                          setInspectorCell({
-                            title: `${col.name} (Row #${actualRowIndex})`,
-                            value: cellVal,
-                          })
-                        }
-                        className="px-3.5 py-1.5 border-r border-slate-800/60 text-slate-300 max-w-xs truncate cursor-pointer hover:bg-indigo-950/20"
-                        title="Click to inspect full cell value"
-                      >
-                        {isNull ? (
-                          <span className="text-slate-600 italic text-[11px]">NULL</span>
-                        ) : isObj ? (
-                          <span className="text-amber-400 font-medium bg-amber-950/40 px-1.5 py-0.5 rounded text-[10px] border border-amber-900/50">
-                            {Array.isArray(cellVal) ? `Array(${cellVal.length})` : 'JSON Object'}
-                          </span>
-                        ) : typeof cellVal === 'boolean' ? (
-                          <span
-                            className={`px-1 py-0.5 rounded text-[10px] font-semibold ${
-                              cellVal
-                                ? 'bg-emerald-950 text-emerald-400'
-                                : 'bg-rose-950 text-rose-400'
-                            }`}
-                          >
-                            {cellVal ? 'TRUE' : 'FALSE'}
-                          </span>
-                        ) : (
-                          <span>{String(cellVal)}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {onDeleteRow && (
-                    <td className="px-2 py-1 text-center border-r border-slate-800/60">
+                  <div className="flex flex-col items-center justify-center space-y-2">
+                    <p className="text-xs text-slate-400">No records found in this table</p>
+                    {onOpenInsertRow && (
                       <button
-                        onClick={() => onDeleteRow(row)}
-                        title="Delete this row"
-                        className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                        onClick={onOpenInsertRow}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium flex items-center space-x-1.5 transition cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <PlusCircle className="w-3.5 h-3.5" />
+                        <span>Insert New Row</span>
                       </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              paginatedRows.map((row, rowIdx) => {
+                const actualRowIndex = (page - 1) * pageSize + rowIdx + 1;
+                return (
+                  <tr
+                    key={rowIdx}
+                    className="hover:bg-slate-900/70 transition group"
+                  >
+                    <td className="px-3 py-1.5 text-center text-slate-600 text-[11px] border-r border-slate-800/60 select-none">
+                      {actualRowIndex}
                     </td>
-                  )}
-                </tr>
-              );
-            })}
+                    {columns.map((col) => {
+                      const cellVal = row[col.name];
+                      const isNull = cellVal === null || cellVal === undefined;
+                      const isObj = typeof cellVal === 'object' && !isNull;
+                      const isEditing =
+                        editingCell?.rowIdx === rowIdx && editingCell?.colName === col.name;
+
+                      return (
+                        <td
+                          key={col.name}
+                          onDoubleClick={() => {
+                            if (onUpdateCell && !col.is_primary_key) {
+                              setEditingCell({
+                                rowIdx,
+                                colName: col.name,
+                                value:
+                                  cellVal === null || cellVal === undefined
+                                    ? ''
+                                    : String(cellVal),
+                              });
+                            } else {
+                              setInspectorCell({
+                                title: `${col.name} (Row #${actualRowIndex})`,
+                                value: cellVal,
+                              });
+                            }
+                          }}
+                          onClick={() => {
+                            if (!isEditing) {
+                              setInspectorCell({
+                                title: `${col.name} (Row #${actualRowIndex})`,
+                                value: cellVal,
+                              });
+                            }
+                          }}
+                          className="px-3.5 py-1.5 border-r border-slate-800/60 text-slate-300 max-w-xs truncate cursor-pointer hover:bg-indigo-950/20"
+                          title={
+                            onUpdateCell && !col.is_primary_key
+                              ? 'Double click to edit cell inline'
+                              : 'Click to inspect full cell value'
+                          }
+                        >
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              autoFocus
+                              value={editingCell.value}
+                              onChange={(e) =>
+                                setEditingCell((prev) =>
+                                  prev ? { ...prev, value: e.target.value } : null
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.currentTarget.blur();
+                                } else if (e.key === 'Escape') {
+                                  setEditingCell(null);
+                                }
+                              }}
+                              onBlur={async () => {
+                                if (editingCell) {
+                                  const newVal = editingCell.value;
+                                  setEditingCell(null);
+                                  if (String(cellVal ?? '') !== newVal) {
+                                    await onUpdateCell?.(row, col.name, newVal);
+                                  }
+                                }
+                              }}
+                              className="w-full bg-slate-900 border border-indigo-500 rounded px-1.5 py-0.5 text-xs text-white font-mono focus:outline-hidden"
+                            />
+                          ) : isNull ? (
+                            <span className="text-slate-600 italic text-[11px]">NULL</span>
+                          ) : isObj ? (
+                            <span className="text-amber-400 font-medium bg-amber-950/40 px-1.5 py-0.5 rounded text-[10px] border border-amber-900/50">
+                              {Array.isArray(cellVal) ? `Array(${cellVal.length})` : 'JSON Object'}
+                            </span>
+                          ) : typeof cellVal === 'boolean' ? (
+                            <span
+                              className={`px-1 py-0.5 rounded text-[10px] font-semibold ${
+                                cellVal
+                                  ? 'bg-emerald-950 text-emerald-400'
+                                  : 'bg-rose-950 text-rose-400'
+                              }`}
+                            >
+                              {cellVal ? 'TRUE' : 'FALSE'}
+                            </span>
+                          ) : (
+                            <span>{String(cellVal)}</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    {onDeleteRow && (
+                      <td className="px-2 py-1 text-center border-r border-slate-800/60">
+                        <button
+                          onClick={() => onDeleteRow(row)}
+                          title="Delete this row"
+                          className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>

@@ -9,6 +9,7 @@ import {
   KeyRound,
   Layers,
   MoreVertical,
+  Pencil,
   Plus,
   PlusCircle,
   RefreshCw,
@@ -41,6 +42,9 @@ interface ObjectExplorerProps {
   onOpenAddColumnForTable?: (tableName: string) => void;
   onOpenAddIndexForTable?: (tableName: string) => void;
   onOpenInsertRowForTable?: (tableName: string) => void;
+  onOpenEditColumnForTable?: (tableName: string, col: ColumnMeta) => void;
+  onDropColumnForTable?: (tableName: string, colName: string) => void;
+  onDropIndexForTable?: (tableName: string, indexName: string) => void;
   onTruncateTable: (tableName: string) => void;
   onDropTable: (tableName: string) => void;
   onGenerateSql: (sql: string) => void;
@@ -60,6 +64,9 @@ export const ObjectExplorer = ({
   onOpenAddColumnForTable,
   onOpenAddIndexForTable,
   onOpenInsertRowForTable,
+  onOpenEditColumnForTable,
+  onDropColumnForTable,
+  onDropIndexForTable,
   onTruncateTable,
   onDropTable,
   onGenerateSql,
@@ -215,6 +222,11 @@ export const ObjectExplorer = ({
                     <div key={t.name} className="flex flex-col">
                       <div
                         onDoubleClick={() => onSelectTable(t.name, 'data')}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setActiveMenuTable(t.name);
+                        }}
                         className="group flex items-center justify-between px-2 py-1 rounded-md text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-900 cursor-pointer transition relative"
                       >
                         <div className="flex items-center space-x-1.5 truncate flex-1">
@@ -433,7 +445,12 @@ export const ObjectExplorer = ({
                                     <div
                                       key={col.name}
                                       onClick={() => onSelectTable(t.name, 'structure')}
-                                      className="flex items-center justify-between py-0.5 text-slate-400 hover:text-slate-200 cursor-pointer font-mono"
+                                      onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        onOpenEditColumnForTable?.(t.name, col);
+                                      }}
+                                      className="group/col flex items-center justify-between py-0.5 text-slate-400 hover:text-slate-200 cursor-pointer font-mono"
                                     >
                                       <div className="flex items-center space-x-1.5 truncate">
                                         {col.is_primary_key ? (
@@ -451,9 +468,37 @@ export const ObjectExplorer = ({
                                           {col.name}
                                         </span>
                                       </div>
-                                      <span className="text-[10px] text-slate-500 lowercase shrink-0">
-                                        {col.data_type}
-                                      </span>
+                                      <div className="flex items-center space-x-1 shrink-0">
+                                        <span className="text-[10px] text-slate-500 lowercase">
+                                          {col.data_type}
+                                        </span>
+                                        {onOpenEditColumnForTable && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onOpenEditColumnForTable(t.name, col);
+                                            }}
+                                            title={`Edit column ${col.name}`}
+                                            className="opacity-0 group-hover/col:opacity-100 p-0.5 text-slate-500 hover:text-indigo-400 transition rounded"
+                                          >
+                                            <Pencil className="w-2.5 h-2.5" />
+                                          </button>
+                                        )}
+                                        {onDropColumnForTable && !col.is_primary_key && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onDropColumnForTable(t.name, col.name);
+                                            }}
+                                            title={`Drop column ${col.name}`}
+                                            className="opacity-0 group-hover/col:opacity-100 p-0.5 text-slate-500 hover:text-rose-400 transition rounded"
+                                          >
+                                            <Trash2 className="w-2.5 h-2.5" />
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
@@ -487,16 +532,31 @@ export const ObjectExplorer = ({
                                     <div
                                       key={idx.name}
                                       onClick={() => onSelectTable(t.name, 'indexes')}
-                                      className="flex items-center justify-between py-0.5 text-slate-400 hover:text-slate-200 cursor-pointer font-mono"
+                                      className="group/idx flex items-center justify-between py-0.5 text-slate-400 hover:text-slate-200 cursor-pointer font-mono"
                                     >
                                       <span className="truncate">{idx.name}</span>
-                                      <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-500">
-                                        {idx.is_primary
-                                          ? 'PK'
-                                          : idx.is_unique
-                                          ? 'UNIQ'
-                                          : 'IDX'}
-                                      </span>
+                                      <div className="flex items-center space-x-1 shrink-0">
+                                        <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-500">
+                                          {idx.is_primary
+                                            ? 'PK'
+                                            : idx.is_unique
+                                            ? 'UNIQ'
+                                            : 'IDX'}
+                                        </span>
+                                        {onDropIndexForTable && !idx.is_primary && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onDropIndexForTable(t.name, idx.name);
+                                            }}
+                                            title={`Drop index ${idx.name}`}
+                                            className="opacity-0 group-hover/idx:opacity-100 p-0.5 text-slate-500 hover:text-rose-400 transition rounded"
+                                          >
+                                            <Trash2 className="w-2.5 h-2.5" />
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   ))}
                                 </div>

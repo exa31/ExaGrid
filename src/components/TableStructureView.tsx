@@ -40,6 +40,7 @@ interface TableStructureViewProps {
   onOpenAddIndex: () => void;
   onOpenInsertRow: () => void;
   onDeleteRow?: (row: Record<string, any>) => void;
+  onUpdateCell?: (row: Record<string, any>, colName: string, newValue: any) => Promise<void>;
   onDropColumn: (colName: string) => void;
   onDropIndex: (indexName: string) => void;
   onOpenInSqlEditor: (sql: string) => void;
@@ -61,6 +62,7 @@ export const TableStructureView = ({
   onOpenAddIndex,
   onOpenInsertRow,
   onDeleteRow,
+  onUpdateCell,
   onDropColumn,
   onDropIndex,
   onOpenInSqlEditor,
@@ -211,6 +213,7 @@ export const TableStructureView = ({
             tableName={tableName}
             onOpenInsertRow={onOpenInsertRow}
             onDeleteRow={onDeleteRow}
+            onUpdateCell={onUpdateCell}
           />
         )}
 
