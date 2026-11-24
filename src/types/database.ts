@@ -65,6 +65,15 @@ export interface IndexMeta {
   index_type?: string;
 }
 
+export interface ForeignKeyMeta {
+  constraint_name: string;
+  column_name: string;
+  foreign_table: string;
+  foreign_column: string;
+  on_delete?: string;
+  on_update?: string;
+}
+
 export interface TableDdl {
   table: string;
   ddl: string;
@@ -87,13 +96,33 @@ export interface IndexDefinition {
   is_unique: boolean;
 }
 
+export interface ForeignKeyDefinition {
+  name: string;
+  column: string;
+  foreign_table: string;
+  foreign_column: string;
+  on_delete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+  on_update?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+}
+
 export interface TableSchemaSpec {
   table_name: string;
   columns: ColumnDefinition[];
   indexes: IndexDefinition[];
 }
 
-export type TableTabSubView = 'data' | 'structure' | 'indexes' | 'ddl';
+export interface ProcessInfo {
+  id: number | string;
+  user: string;
+  host: string;
+  db?: string;
+  command: string;
+  time: number;
+  state?: string;
+  info?: string;
+}
+
+export type TableTabSubView = 'data' | 'structure' | 'indexes' | 'foreign_keys' | 'er_diagram' | 'ddl';
 
 export type TabType = 'query' | 'table';
 
@@ -109,6 +138,7 @@ export interface TabItem {
   queryResult?: QueryResult | null;
   columns?: ColumnMeta[];
   indexes?: IndexMeta[];
+  foreignKeys?: ForeignKeyMeta[];
   ddl?: string;
   loading?: boolean;
   error?: string | null;

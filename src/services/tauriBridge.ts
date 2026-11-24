@@ -3,9 +3,12 @@ import type {
   ColumnMeta,
   ConnectionConfig,
   DatabaseEngine,
+  ForeignKeyDefinition,
+  ForeignKeyMeta,
   IndexDefinition,
   IndexMeta,
   PingResult,
+  ProcessInfo,
   QueryResult,
   StoredProfile,
   TableDdl,
@@ -510,5 +513,188 @@ export const tauriBridge = {
   generateDeleteSnippet: (table: string, columns: ColumnMeta[]): string => {
     const pk = columns.find((c) => c.is_primary_key)?.name || 'id';
     return `DELETE FROM ${table} WHERE ${pk} = 1;`;
+  },
+
+  getTableForeignKeys: async (
+    connectionId: string,
+    table: string,
+    engine: DatabaseEngine,
+    database?: string
+  ): Promise<ForeignKeyMeta[]> => {
+    try {
+      if (engine === 'mysql') {
+        const sql = `SELECT 
+          CONSTRAINT_NAME as constraint_name, 
+          COLUMN_NAME as column_name, 
+          REFERENCED_TABLE_NAME as foreign_table, 
+          REFERENCED_COLUMN_NAME as foreign_column 
+        FROM information_schema.KEY_COLUMN_USAGE 
+        WHERE TABLE_NAME = '${table}' 
+          ${database ? `AND TABLE_SCHEMA = '${database}'` : 'AND TABLE_SCHEMA = DATABASE()'} 
+          AND REFERENCED_TABLE_NAME IS NOT NULL;`;
+        const res = await tauriBridge.executeQuery(connectionId, sql, database, table);
+        return res.rows.map((r: any) => ({
+          constraint_name: String(r.constraint_name || r.CONSTRAINT_NAME || ''),
+          column_name: String(r.column_name || r.COLUMN_NAME || ''),
+          foreign_table: String(r.foreign_table || r.REFERENCED_TABLE_NAME || ''),
+          foreign_column: String(r.foreign_column || r.REFERENCED_COLUMN_NAME || ''),
+          on_delete: 'RESTRICT',
+          on_update: 'RESTRICT',
+        }));
+      }
+
+      if (engine === 'postgres') {
+        const sql = `SELECT
+          tc.constraint_name,
+          kcu.column_name,
+          ccu.table_name AS foreign_table,
+          ccu.column_name AS foreign_column,
+          rc.delete_rule AS on_delete,
+          rc.update_rule AS on_update
+        FROM information_schema.table_constraints AS tc
+        JOIN information_schema.key_column_usage AS kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage AS ccu
+          ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+        LEFT JOIN information_schema.referential_constraints AS rc
+          ON tc.constraint_name = rc.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = '${table}';`;
+        const res = await tauriBridge.executeQuery(connectionId, sql, database, table);
+        return res.rows.map((r: any) => ({
+          constraint_name: String(r.constraint_name || ''),
+          column_name: String(r.column_name || ''),
+          foreign_table: String(r.foreign_table || ''),
+          foreign_column: String(r.foreign_column || ''),
+          on_delete: r.on_delete || 'NO ACTION',
+          on_update: r.on_update || 'NO ACTION',
+        }));
+      }
+
+      if (engine === 'sqlite') {
+        const sql = `PRAGMA foreign_key_list('${table}');`;
+        const res = await tauriBridge.executeQuery(connectionId, sql);
+        return res.rows.map((r: any, idx: number) => ({
+          constraint_name: `fk_${table}_${r.from || idx}`,
+          column_name: String(r.from || ''),
+          foreign_table: String(r.table || ''),
+          foreign_column: String(r.to || ''),
+          on_delete: r.on_delete || 'NO ACTION',
+          on_update: r.on_update || 'NO ACTION',
+        }));
+      }
+
+      return [];
+    } catch (_err) {
+      return [];
+    }
+  },
+
+  generateAddForeignKeySql: (engine: DatabaseEngine, table: string, fk: ForeignKeyDefinition): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const delRule = fk.on_delete ? ` ON DELETE ${fk.on_delete}` : '';
+    const updRule = fk.on_update ? ` ON UPDATE ${fk.on_update}` : '';
+    return `ALTER TABLE ${q}${table}${q} ADD CONSTRAINT ${q}${fk.name}${q} FOREIGN KEY (${q}${fk.column}${q}) REFERENCES ${q}${fk.foreign_table}${q} (${q}${fk.foreign_column}${q})${delRule}${updRule};`;
+  },
+
+  generateDropForeignKeySql: (engine: DatabaseEngine, table: string, constraintName: string): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    if (engine === 'mysql') {
+      return `ALTER TABLE ${q}${table}${q} DROP FOREIGN KEY ${q}${constraintName}${q};`;
+    }
+    return `ALTER TABLE ${q}${table}${q} DROP CONSTRAINT ${q}${constraintName}${q};`;
+  },
+
+  getServerProcessList: async (
+    connectionId: string,
+    engine: DatabaseEngine,
+    database?: string
+  ): Promise<ProcessInfo[]> => {
+    if (engine === 'mysql') {
+      const res = await tauriBridge.executeQuery(connectionId, 'SHOW FULL PROCESSLIST;', database);
+      return res.rows.map((r: any) => ({
+        id: r.Id ?? r.id ?? 0,
+        user: String(r.User ?? r.user ?? ''),
+        host: String(r.Host ?? r.host ?? ''),
+        db: r.db ? String(r.db) : undefined,
+        command: String(r.Command ?? r.command ?? ''),
+        time: Number(r.Time ?? r.time ?? 0),
+        state: r.State ? String(r.State) : undefined,
+        info: r.Info ? String(r.Info) : undefined,
+      }));
+    }
+
+    if (engine === 'postgres') {
+      const sql = `SELECT pid as id, usename as user, client_addr as host, datname as db, state as command, round(extract(epoch from now() - query_start)) as time, state, query as info FROM pg_stat_activity WHERE state IS NOT NULL ORDER BY time DESC;`;
+      const res = await tauriBridge.executeQuery(connectionId, sql, database);
+      return res.rows.map((r: any) => ({
+        id: r.id ?? 0,
+        user: String(r.user ?? ''),
+        host: String(r.host ?? ''),
+        db: r.db ? String(r.db) : undefined,
+        command: String(r.command ?? ''),
+        time: Number(r.time ?? 0),
+        state: r.state ? String(r.state) : undefined,
+        info: r.info ? String(r.info) : undefined,
+      }));
+    }
+
+    return [];
+  },
+
+  killProcess: async (connectionId: string, engine: DatabaseEngine, processId: number | string): Promise<void> => {
+    const sql = engine === 'mysql' ? `KILL ${processId};` : `SELECT pg_terminate_backend(${processId});`;
+    await tauriBridge.executeQuery(connectionId, sql);
+  },
+
+  explainQuery: async (connectionId: string, query: string, database?: string): Promise<QueryResult> => {
+    const clean = query.trim().replace(/;+$/, '');
+    const sql = `EXPLAIN ${clean};`;
+    return tauriBridge.executeQuery(connectionId, sql, database);
+  },
+
+  generateSqlDump: (
+    engine: DatabaseEngine,
+    table: string,
+    ddl: string,
+    columns: ColumnMeta[],
+    rows: Record<string, any>[]
+  ): string => {
+    const q = engine === 'mysql' ? '`' : '"';
+    const timestamp = new Date().toISOString();
+    let out = `-- --------------------------------------------------------\n`;
+    out += `-- ExaGrid SQL Dump v0.1.7\n`;
+    out += `-- Table: ${table}\n`;
+    out += `-- Export Date: ${timestamp}\n`;
+    out += `-- Total Records: ${rows.length}\n`;
+    out += `-- --------------------------------------------------------\n\n`;
+
+    out += `DROP TABLE IF EXISTS ${q}${table}${q};\n\n`;
+    out += `${ddl.trim()};\n\n`;
+
+    if (rows.length > 0) {
+      out += `-- Dumping data for table ${q}${table}${q}\n`;
+      const colNames = columns.map((c) => c.name);
+      const colsHeader = colNames.map((c) => `${q}${c}${q}`).join(', ');
+
+      const chunkSize = 50;
+      for (let i = 0; i < rows.length; i += chunkSize) {
+        const chunk = rows.slice(i, i + chunkSize);
+        const valuesList = chunk.map((r) => {
+          const vals = colNames.map((col) => {
+            const val = r[col];
+            if (val === null || val === undefined) return 'NULL';
+            if (typeof val === 'number') return String(val);
+            if (typeof val === 'boolean') return val ? '1' : '0';
+            const esc = String(val).replace(/'/g, "''");
+            return `'${esc}'`;
+          });
+          return `(${vals.join(', ')})`;
+        });
+
+        out += `INSERT INTO ${q}${table}${q} (${colsHeader}) VALUES\n  ${valuesList.join(',\n  ')};\n\n`;
+      }
+    }
+
+    return out;
   },
 };

@@ -1,13 +1,16 @@
 import {
+  Activity,
   ChevronDown,
   ChevronRight,
   Code2,
   Columns3,
   FileCode,
   FolderTree,
+  GitFork,
   Key,
   KeyRound,
   Layers,
+  Link,
   MoreVertical,
   Pencil,
   Plus,
@@ -40,6 +43,7 @@ interface ObjectExplorerProps {
   onOpenNewQuery: () => void;
   onRefreshTables: () => void;
   onOpenCreateTable: () => void;
+  onOpenProcessList?: () => void;
   onOpenAddColumnForTable?: (tableName: string) => void;
   onOpenAddIndexForTable?: (tableName: string) => void;
   onOpenInsertRowForTable?: (tableName: string) => void;
@@ -62,6 +66,7 @@ export const ObjectExplorer = ({
   onOpenNewQuery,
   onRefreshTables,
   onOpenCreateTable,
+  onOpenProcessList,
   onOpenAddColumnForTable,
   onOpenAddIndexForTable,
   onOpenInsertRowForTable,
@@ -129,8 +134,18 @@ export const ObjectExplorer = ({
             onClick: () => onSelectTable(tableName, 'structure'),
           },
           {
+            label: 'View Foreign Keys',
+            icon: <Link className="w-3.5 h-3.5 text-emerald-400" />,
+            onClick: () => onSelectTable(tableName, 'foreign_keys'),
+          },
+          {
+            label: 'View ER Diagram',
+            icon: <GitFork className="w-3.5 h-3.5 text-purple-400" />,
+            onClick: () => onSelectTable(tableName, 'er_diagram'),
+          },
+          {
             label: 'View DDL Script',
-            icon: <Code2 className="w-3.5 h-3.5 text-emerald-400" />,
+            icon: <Code2 className="w-3.5 h-3.5 text-rose-400" />,
             onClick: () => onSelectTable(tableName, 'ddl'),
           },
         ],
@@ -218,6 +233,15 @@ export const ObjectExplorer = ({
             icon: <FileCode className="w-3.5 h-3.5 text-indigo-400" />,
             onClick: onOpenNewQuery,
           },
+          ...(onOpenProcessList
+            ? [
+                {
+                  label: 'Activity & Processlist',
+                  icon: <Activity className="w-3.5 h-3.5 text-emerald-400" />,
+                  onClick: onOpenProcessList,
+                },
+              ]
+            : []),
           {
             label: 'Refresh Tables & Schema',
             icon: <RefreshCw className="w-3.5 h-3.5 text-slate-400" />,

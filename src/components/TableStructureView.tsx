@@ -4,8 +4,10 @@ import {
   Copy,
   Database,
   FileCode,
+  GitFork,
   Key,
   KeyRound,
+  Link,
   Pencil,
   Plus,
   PlusCircle,
@@ -18,12 +20,15 @@ import { useState } from 'react';
 import type {
   ColumnMeta,
   DatabaseEngine,
+  ForeignKeyMeta,
   IndexMeta,
   QueryResult,
+  TableMeta,
   TableTabSubView,
 } from '../types/database';
 import { ContextMenu, type ContextMenuSection } from './ContextMenu';
 import { DataGrid } from './DataGrid';
+import { ERDiagramView } from './ERDiagramView';
 
 interface TableStructureViewProps {
   tableName: string;
@@ -33,40 +38,50 @@ interface TableStructureViewProps {
   result: QueryResult | null;
   columns: ColumnMeta[];
   indexes: IndexMeta[];
+  foreignKeys?: ForeignKeyMeta[];
+  tables?: TableMeta[];
   ddl: string;
   loading: boolean;
   onRefresh: () => void;
   onOpenAddColumn: () => void;
   onOpenEditColumn: (col: ColumnMeta) => void;
   onOpenAddIndex: () => void;
+  onOpenAddForeignKey?: () => void;
   onOpenInsertRow: () => void;
   onDeleteRow?: (row: Record<string, any>) => void;
   onUpdateCell?: (row: Record<string, any>, colName: string, newValue: any) => Promise<void>;
   onDropColumn: (colName: string) => void;
   onDropIndex: (indexName: string) => void;
+  onDropForeignKey?: (constraintName: string) => void;
   onOpenInSqlEditor: (sql: string) => void;
+  onSelectTable?: (tableName: string) => void;
 }
 
 export const TableStructureView = ({
   tableName,
-  engine: _engine,
+  engine,
   subView,
   onChangeSubView,
   result,
   columns,
   indexes,
+  foreignKeys = [],
+  tables = [],
   ddl,
   loading,
   onRefresh,
   onOpenAddColumn,
   onOpenEditColumn,
   onOpenAddIndex,
+  onOpenAddForeignKey,
   onOpenInsertRow,
   onDeleteRow,
   onUpdateCell,
   onDropColumn,
   onDropIndex,
+  onDropForeignKey,
   onOpenInSqlEditor,
+  onSelectTable,
 }: TableStructureViewProps) => {
   const [copied, setCopied] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
@@ -89,7 +104,7 @@ export const TableStructureView = ({
         <div className="flex items-center space-x-1">
           <button
             onClick={() => onChangeSubView('data')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
               subView === 'data'
                 ? 'bg-slate-800 text-slate-100 shadow-xs'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -106,7 +121,7 @@ export const TableStructureView = ({
 
           <button
             onClick={() => onChangeSubView('structure')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
               subView === 'structure'
                 ? 'bg-slate-800 text-slate-100 shadow-xs'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -118,7 +133,7 @@ export const TableStructureView = ({
 
           <button
             onClick={() => onChangeSubView('indexes')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
               subView === 'indexes'
                 ? 'bg-slate-800 text-slate-100 shadow-xs'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -129,14 +144,38 @@ export const TableStructureView = ({
           </button>
 
           <button
+            onClick={() => onChangeSubView('foreign_keys')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
+              subView === 'foreign_keys'
+                ? 'bg-slate-800 text-slate-100 shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <Link className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Foreign Keys ({foreignKeys.length})</span>
+          </button>
+
+          <button
+            onClick={() => onChangeSubView('er_diagram')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
+              subView === 'er_diagram'
+                ? 'bg-slate-800 text-slate-100 shadow-xs'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <GitFork className="w-3.5 h-3.5 text-purple-400" />
+            <span>ER Diagram</span>
+          </button>
+
+          <button
             onClick={() => onChangeSubView('ddl')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
               subView === 'ddl'
                 ? 'bg-slate-800 text-slate-100 shadow-xs'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
             }`}
           >
-            <Code2 className="w-3.5 h-3.5 text-emerald-400" />
+            <Code2 className="w-3.5 h-3.5 text-rose-400" />
             <span>DDL Script</span>
           </button>
         </div>
@@ -165,36 +204,42 @@ export const TableStructureView = ({
           {subView === 'indexes' && (
             <button
               onClick={onOpenAddIndex}
-              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1"
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1 cursor-pointer"
             >
               <Plus className="w-3 h-3" />
               <span>Add Index</span>
             </button>
           )}
 
+          {subView === 'foreign_keys' && onOpenAddForeignKey && (
+            <button
+              onClick={onOpenAddForeignKey}
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1 cursor-pointer"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Add Foreign Key</span>
+            </button>
+          )}
+
           {subView === 'ddl' && (
-            <div className="flex items-center space-x-1.5">
+            <div className="flex items-center space-x-2">
               <button
                 onClick={handleCopyDdl}
-                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs font-medium transition flex items-center space-x-1"
+                className="px-2.5 py-1 rounded-md text-xs font-medium border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white transition flex items-center space-x-1.5 cursor-pointer"
               >
                 {copied ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
-                  </>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
                 ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    <span>Copy DDL</span>
-                  </>
+                  <Copy className="w-3.5 h-3.5 text-slate-400" />
                 )}
+                <span>{copied ? 'Copied' : 'Copy DDL'}</span>
               </button>
+
               <button
                 onClick={() => onOpenInSqlEditor(ddl)}
-                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-medium transition flex items-center space-x-1"
+                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-medium shadow-xs transition flex items-center space-x-1.5 cursor-pointer"
               >
-                <FileCode className="w-3 h-3" />
+                <FileCode className="w-3.5 h-3.5" />
                 <span>Open in SQL Editor</span>
               </button>
             </div>
@@ -202,21 +247,23 @@ export const TableStructureView = ({
 
           <button
             onClick={onRefresh}
-            title="Refresh"
-            className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition"
+            title="Refresh Table Schema"
+            className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Main Content per Sub-View */}
+      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {subView === 'data' && (
           <DataGrid
             result={result}
             loading={loading}
             tableName={tableName}
+            engine={engine}
+            ddl={ddl}
             onOpenInsertRow={onOpenInsertRow}
             onDeleteRow={onDeleteRow}
             onUpdateCell={onUpdateCell}
@@ -245,7 +292,7 @@ export const TableStructureView = ({
                       </td>
                     </tr>
                   ) : (
-                    columns.map((col, idx) => (
+                    columns.map((col, i) => (
                       <tr
                         key={col.name}
                         onContextMenu={(e) => {
@@ -265,7 +312,7 @@ export const TableStructureView = ({
                                   },
                                   {
                                     label: 'Add New Column...',
-                                    icon: <Plus className="w-3.5 h-3.5 text-slate-400" />,
+                                    icon: <Plus className="w-3.5 h-3.5 text-emerald-400" />,
                                     onClick: onOpenAddColumn,
                                   },
                                   ...(!col.is_primary_key
@@ -286,17 +333,15 @@ export const TableStructureView = ({
                         className="hover:bg-slate-800/40 transition cursor-context-menu"
                       >
                         <td className="py-2.5 px-4 text-center text-slate-500 font-mono text-[11px]">
-                          {idx + 1}
+                          {i + 1}
                         </td>
                         <td className="py-2.5 px-4 font-mono font-medium text-slate-200">
                           {col.name}
                         </td>
-                        <td className="py-2.5 px-4">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-mono uppercase bg-slate-800 text-indigo-300 border border-slate-700/60">
-                            {col.data_type}
-                          </span>
+                        <td className="py-2.5 px-4 font-mono text-indigo-400">
+                          {col.data_type}
                         </td>
-                        <td className="py-2.5 px-4 text-center">
+                        <td className="py-2.5 px-4 text-center font-mono">
                           {col.nullable ? (
                             <span className="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-1.5 py-0.5 rounded">
                               YES
@@ -331,7 +376,7 @@ export const TableStructureView = ({
                                 ? 'Cannot drop Primary Key directly'
                                 : `Drop column ${col.name}`
                             }
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -447,7 +492,7 @@ export const TableStructureView = ({
                                 ? 'Cannot drop Primary Key index directly'
                                 : `Drop index ${idx.name}`
                             }
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 disabled:opacity-30 disabled:hover:bg-transparent transition"
+                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -459,6 +504,95 @@ export const TableStructureView = ({
               </table>
             </div>
           </div>
+        )}
+
+        {subView === 'foreign_keys' && (
+          <div className="flex-1 overflow-auto p-4">
+            <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/40">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/90 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    <th className="py-2.5 px-4 w-12 text-center">#</th>
+                    <th className="py-2.5 px-4">Constraint Name</th>
+                    <th className="py-2.5 px-4">Column</th>
+                    <th className="py-2.5 px-4">Referenced Table</th>
+                    <th className="py-2.5 px-4">Referenced Column</th>
+                    <th className="py-2.5 px-4 text-center">On Delete</th>
+                    <th className="py-2.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-xs">
+                  {foreignKeys.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-slate-500">
+                        <div className="flex flex-col items-center justify-center space-y-2">
+                          <p className="text-xs text-slate-400">No foreign key constraints defined on this table</p>
+                          {onOpenAddForeignKey && (
+                            <button
+                              onClick={onOpenAddForeignKey}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium flex items-center space-x-1.5 transition cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Add Foreign Key</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    foreignKeys.map((fk, i) => (
+                      <tr
+                        key={fk.constraint_name}
+                        className="hover:bg-slate-800/40 transition"
+                      >
+                        <td className="py-2.5 px-4 text-center text-slate-500 font-mono text-[11px]">
+                          {i + 1}
+                        </td>
+                        <td className="py-2.5 px-4 font-mono font-medium text-slate-200">
+                          {fk.constraint_name}
+                        </td>
+                        <td className="py-2.5 px-4 font-mono text-indigo-400">
+                          {fk.column_name}
+                        </td>
+                        <td className="py-2.5 px-4 font-mono text-amber-300">
+                          {fk.foreign_table}
+                        </td>
+                        <td className="py-2.5 px-4 font-mono text-slate-300">
+                          {fk.foreign_column}
+                        </td>
+                        <td className="py-2.5 px-4 text-center">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400 border border-slate-700">
+                            {fk.on_delete || 'RESTRICT'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
+                          {onDropForeignKey && (
+                            <button
+                              onClick={() => onDropForeignKey(fk.constraint_name)}
+                              title={`Drop constraint ${fk.constraint_name}`}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {subView === 'er_diagram' && (
+          <ERDiagramView
+            currentTable={tableName}
+            tables={tables}
+            columns={columns}
+            foreignKeys={foreignKeys}
+            onSelectTable={onSelectTable}
+          />
         )}
 
         {subView === 'ddl' && (

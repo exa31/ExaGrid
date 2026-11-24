@@ -1,4 +1,5 @@
 import {
+  Activity,
   FileCode,
   KeyRound,
   Plus,
@@ -10,12 +11,14 @@ import {
 import { useEffect, useState } from 'react';
 
 import { AddColumnModal } from './components/AddColumnModal';
+import { AddForeignKeyModal } from './components/AddForeignKeyModal';
 import { AddIndexModal } from './components/AddIndexModal';
 import { ConnectionModal } from './components/ConnectionModal';
 import { DataGrid } from './components/DataGrid';
 import { EditColumnModal } from './components/EditColumnModal';
 import { InsertRowModal } from './components/InsertRowModal';
 import { ObjectExplorer } from './components/ObjectExplorer';
+import { ProcessListModal } from './components/ProcessListModal';
 import { QueryConsole } from './components/QueryConsole';
 import { Sidebar } from './components/Sidebar';
 import { TableDesignerModal } from './components/TableDesignerModal';
@@ -26,6 +29,7 @@ import type {
   ColumnDefinition,
   ColumnMeta,
   ConnectionConfig,
+  ForeignKeyDefinition,
   IndexDefinition,
   StoredProfile,
   TabItem,
@@ -64,6 +68,8 @@ export default function App() {
   const [isEditColumnOpen, setIsEditColumnOpen] = useState(false);
   const [editingColumn, setEditingColumn] = useState<ColumnMeta | null>(null);
   const [isAddIndexOpen, setIsAddIndexOpen] = useState(false);
+  const [isAddForeignKeyOpen, setIsAddForeignKeyOpen] = useState(false);
+  const [isProcessListOpen, setIsProcessListOpen] = useState(false);
   const [isInsertRowOpen, setIsInsertRowOpen] = useState(false);
   const [targetTableForModal, setTargetTableForModal] = useState<string>('');
 
@@ -166,7 +172,7 @@ export default function App() {
 
     if (connectedProfileId) {
       try {
-        const [queryRes, colsRes, idxRes, ddlRes] = await Promise.allSettled([
+        const [queryRes, colsRes, idxRes, ddlRes, fksRes] = await Promise.allSettled([
           tauriBridge.executeQuery(
             connectedProfileId,
             initialQuery,
@@ -177,6 +183,7 @@ export default function App() {
           tauriBridge.getTableColumns(connectedProfileId, tableName),
           tauriBridge.getTableIndexes(connectedProfileId, tableName),
           tauriBridge.getTableDdl(connectedProfileId, tableName),
+          tauriBridge.getTableForeignKeys(connectedProfileId, tableName, engine, connectedProfile?.database),
         ]);
 
         setTabs((prev) =>
@@ -187,6 +194,7 @@ export default function App() {
                   queryResult: queryRes.status === 'fulfilled' ? queryRes.value : null,
                   columns: colsRes.status === 'fulfilled' ? colsRes.value : [],
                   indexes: idxRes.status === 'fulfilled' ? idxRes.value : [],
+                  foreignKeys: fksRes.status === 'fulfilled' ? fksRes.value : [],
                   ddl: ddlRes.status === 'fulfilled' ? ddlRes.value.ddl : '',
                   loading: false,
                 }
@@ -220,7 +228,7 @@ export default function App() {
     );
 
     try {
-      const [queryRes, colsRes, idxRes, ddlRes] = await Promise.allSettled([
+      const [queryRes, colsRes, idxRes, ddlRes, fksRes] = await Promise.allSettled([
         tauriBridge.executeQuery(
           connectedProfileId,
           tab.query || `SELECT * FROM ${tab.table} LIMIT 50;`,
@@ -231,6 +239,7 @@ export default function App() {
         tauriBridge.getTableColumns(connectedProfileId, tab.table),
         tauriBridge.getTableIndexes(connectedProfileId, tab.table),
         tauriBridge.getTableDdl(connectedProfileId, tab.table),
+        tauriBridge.getTableForeignKeys(connectedProfileId, tab.table, engine, connectedProfile?.database),
       ]);
 
       setTabs((prev) =>
@@ -241,6 +250,7 @@ export default function App() {
                 queryResult: queryRes.status === 'fulfilled' ? queryRes.value : null,
                 columns: colsRes.status === 'fulfilled' ? colsRes.value : [],
                 indexes: idxRes.status === 'fulfilled' ? idxRes.value : [],
+                foreignKeys: fksRes.status === 'fulfilled' ? fksRes.value : [],
                 ddl: ddlRes.status === 'fulfilled' ? ddlRes.value.ddl : '',
                 loading: false,
               }
@@ -555,6 +565,67 @@ export default function App() {
     }
   };
 
+  const handleAddForeignKeyToTable = async (fk: ForeignKeyDefinition) => {
+    if (!connectedProfileId || !targetTableForModal) return;
+    try {
+      const sql = tauriBridge.generateAddForeignKeySql(engine, targetTableForModal, fk);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        targetTableForModal
+      );
+      await handleRefreshActiveTable();
+    } catch (err: any) {
+      alert(`Failed to add foreign key: ${err.message || err}`);
+    }
+  };
+
+  const handleDropForeignKey = async (constraintName: string) => {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || !tab.table || !connectedProfileId) return;
+    if (
+      !confirm(
+        `Are you sure you want to drop foreign key constraint "${constraintName}" from "${tab.table}"?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const sql = tauriBridge.generateDropForeignKeySql(engine, tab.table, constraintName);
+      await tauriBridge.executeQuery(
+        connectedProfileId,
+        sql,
+        connectedProfile?.database,
+        tab.table
+      );
+      await handleRefreshActiveTable();
+    } catch (err: any) {
+      alert(`Failed to drop foreign key: ${err.message || err}`);
+    }
+  };
+
+  const handleExplainQuery = async (queryToExplain: string) => {
+    if (!connectedProfileId) return;
+    try {
+      const res = await tauriBridge.explainQuery(
+        connectedProfileId,
+        queryToExplain,
+        connectedProfile?.database
+      );
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === activeTabId
+            ? { ...t, queryResult: res, error: null }
+            : t
+        )
+      );
+    } catch (err: any) {
+      alert(`Explain execution failed: ${err.message || err}`);
+    }
+  };
+
   const handleTruncateTable = async (tableName: string) => {
     if (!connectedProfileId) return;
     if (
@@ -680,6 +751,15 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setIsProcessListOpen(true)}
+                title="Server Activity & Processlist (Kill Queries / Threads)"
+                className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-md text-xs font-medium border border-slate-800 flex items-center space-x-1.5 transition cursor-pointer"
+              >
+                <Activity className="w-3 h-3 text-emerald-400 animate-pulse" />
+                <span>Processlist</span>
+              </button>
+
+              <button
                 onClick={() => loadTables(connectedProfile.id)}
                 title="Refresh All Tables"
                 className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md border border-slate-800 transition cursor-pointer"
@@ -779,6 +859,7 @@ export default function App() {
           onOpenNewQuery={() => handleNewQueryTab()}
           onRefreshTables={() => connectedProfileId && loadTables(connectedProfileId)}
           onOpenCreateTable={() => setIsDesignerOpen(true)}
+          onOpenProcessList={() => setIsProcessListOpen(true)}
           onOpenAddColumnForTable={(tbl) => {
             setTargetTableForModal(tbl);
             setIsAddColumnOpen(true);
@@ -819,6 +900,7 @@ export default function App() {
                 <QueryConsole
                   initialQuery={activeTab.query}
                   onExecute={handleExecuteQuery}
+                  onExplain={handleExplainQuery}
                   loading={activeTab.loading || false}
                   result={activeTab.queryResult || null}
                   error={activeTab.error || null}
@@ -828,6 +910,8 @@ export default function App() {
                   result={activeTab?.queryResult || null}
                   loading={activeTab?.loading || false}
                   tableName={activeTab?.table}
+                  engine={engine}
+                  ddl={activeTab?.ddl}
                 />
               </div>
             ) : (
@@ -839,6 +923,8 @@ export default function App() {
                 result={activeTab?.queryResult || null}
                 columns={activeTab?.columns || []}
                 indexes={activeTab?.indexes || []}
+                foreignKeys={activeTab?.foreignKeys || []}
+                tables={tables}
                 ddl={activeTab?.ddl || ''}
                 loading={activeTab?.loading || false}
                 onRefresh={handleRefreshActiveTable}
@@ -851,6 +937,10 @@ export default function App() {
                   setTargetTableForModal(activeTab?.table || '');
                   setIsAddIndexOpen(true);
                 }}
+                onOpenAddForeignKey={() => {
+                  setTargetTableForModal(activeTab?.table || '');
+                  setIsAddForeignKeyOpen(true);
+                }}
                 onOpenInsertRow={() => {
                   setTargetTableForModal(activeTab?.table || '');
                   setIsInsertRowOpen(true);
@@ -859,7 +949,9 @@ export default function App() {
                 onUpdateCell={handleUpdateCell}
                 onDropColumn={handleDropColumn}
                 onDropIndex={handleDropIndex}
+                onDropForeignKey={handleDropForeignKey}
                 onOpenInSqlEditor={(sql) => handleNewQueryTab(sql)}
+                onSelectTable={(tbl) => handleSelectTable(tbl, 'data')}
               />
             )}
           </div>
@@ -910,6 +1002,16 @@ export default function App() {
         onAdd={handleAddIndexToTable}
       />
 
+      <AddForeignKeyModal
+        isOpen={isAddForeignKeyOpen}
+        tableName={targetTableForModal}
+        columns={activeTab?.columns || []}
+        tables={tables}
+        engine={engine}
+        onClose={() => setIsAddForeignKeyOpen(false)}
+        onAdd={handleAddForeignKeyToTable}
+      />
+
       <InsertRowModal
         isOpen={isInsertRowOpen}
         tableName={targetTableForModal}
@@ -917,6 +1019,14 @@ export default function App() {
         engine={engine}
         onClose={() => setIsInsertRowOpen(false)}
         onInsert={handleInsertRow}
+      />
+
+      <ProcessListModal
+        isOpen={isProcessListOpen}
+        connectionId={connectedProfileId}
+        engine={engine}
+        database={connectedProfile?.database}
+        onClose={() => setIsProcessListOpen(false)}
       />
     </div>
   );

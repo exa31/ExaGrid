@@ -1,20 +1,26 @@
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
   Copy,
+  Database,
   Eye,
+  FileCode2,
   FileJson,
   FileSpreadsheet,
+  Filter,
   Pencil,
   PlusCircle,
+  RotateCcw,
   Search,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { tauriBridge } from '../services/tauriBridge';
-import type { QueryResult } from '../types/database';
+import type { DatabaseEngine, QueryResult } from '../types/database';
 import { CellInspectorModal } from './CellInspectorModal';
 import { ContextMenu, type ContextMenuSection } from './ContextMenu';
 
@@ -22,12 +28,15 @@ interface DataGridProps {
   result: QueryResult | null;
   loading: boolean;
   tableName?: string;
+  engine?: DatabaseEngine;
+  ddl?: string;
   onOpenInsertRow?: () => void;
   onDeleteRow?: (row: Record<string, any>) => void;
   onUpdateCell?: (row: Record<string, any>, colName: string, newValue: any) => Promise<void>;
+  onApplySqlFilter?: (whereClause: string) => void;
 }
 
-function generateExportFileName(tableName: string | undefined, format: 'csv' | 'json'): string {
+function generateExportFileName(tableName: string | undefined, format: 'csv' | 'json' | 'sql'): string {
   return `${tableName || 'query_export'}_${Date.now()}.${format}`;
 }
 
@@ -35,11 +44,15 @@ export const DataGrid = ({
   result,
   loading,
   tableName,
+  engine = 'mysql',
+  ddl = '',
   onOpenInsertRow,
   onDeleteRow,
   onUpdateCell,
+  onApplySqlFilter,
 }: DataGridProps) => {
   const [filterText, setFilterText] = useState('');
+  const [sqlWhere, setSqlWhere] = useState('');
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState<boolean>(true);
   const [page, setPage] = useState<number>(1);
@@ -58,6 +71,71 @@ export const DataGrid = ({
 
   const [inspectorCell, setInspectorCell] = useState<{ title: string; value: any } | null>(null);
 
+  const columns = result?.columns || [];
+  const rows = result?.rows || [];
+
+  // Evaluate WHERE filter client-side if simple expression, otherwise filter by text
+  const filteredRows = useMemo(() => rows.filter((r) => {
+      // 1. Text filter
+      if (filterText.trim()) {
+        const term = filterText.toLowerCase();
+        const matchesText = Object.values(r).some((val) =>
+          String(val ?? '').toLowerCase().includes(term)
+        );
+        if (!matchesText) return false;
+      }
+
+      // 2. SQL WHERE filter (simple expressions like col = 'val', col != 'val', col > num)
+      if (sqlWhere.trim()) {
+        const clause = sqlWhere.trim();
+        // col = 'val' or col = val
+        const eqMatch = clause.match(/^([a-zA-Z0-9_]+)\s*=\s*['"]?([^'"]+)['"]?$/);
+        if (eqMatch) {
+          const [, col, val] = eqMatch;
+          return String(r[col] ?? '').toLowerCase() === val.toLowerCase();
+        }
+
+        // col != 'val'
+        const neqMatch = clause.match(/^([a-zA-Z0-9_]+)\s*(!=|<>)\s*['"]?([^'"]+)['"]?$/);
+        if (neqMatch) {
+          const [, col, , val] = neqMatch;
+          return String(r[col] ?? '').toLowerCase() !== val.toLowerCase();
+        }
+
+        // col > num
+        const gtMatch = clause.match(/^([a-zA-Z0-9_]+)\s*>\s*([0-9.]+)$/);
+        if (gtMatch) {
+          const [, col, numStr] = gtMatch;
+          return Number(r[col]) > Number(numStr);
+        }
+
+        // col < num
+        const ltMatch = clause.match(/^([a-zA-Z0-9_]+)\s*<\s*([0-9.]+)$/);
+        if (ltMatch) {
+          const [, col, numStr] = ltMatch;
+          return Number(r[col]) < Number(numStr);
+        }
+
+        // Fallback: search term
+        return Object.values(r).some((val) =>
+          String(val ?? '').toLowerCase().includes(clause.toLowerCase())
+        );
+      }
+
+      return true;
+    }), [rows, filterText, sqlWhere]);
+
+  const sortedRows = useMemo(() => [...filteredRows].sort((a, b) => {
+      if (!sortCol) return 0;
+      const valA = a[sortCol];
+      const valB = b[sortCol];
+      if (valA === valB) return 0;
+      if (valA === null || valA === undefined) return 1;
+      if (valB === null || valB === undefined) return -1;
+      const cmp = valA > valB ? 1 : -1;
+      return sortAsc ? cmp : -cmp;
+    }), [filteredRows, sortCol, sortAsc]);
+
   if (loading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-500">
@@ -67,7 +145,7 @@ export const DataGrid = ({
     );
   }
 
-  if (!result || result.columns.length === 0) {
+  if (!result || columns.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-500 space-y-3">
         <p className="text-sm font-medium text-slate-400">No data or table selected</p>
@@ -86,27 +164,6 @@ export const DataGrid = ({
       </div>
     );
   }
-
-  const { columns, rows } = result;
-
-  const filteredRows = rows.filter((r) => {
-    if (!filterText.trim()) return true;
-    const term = filterText.toLowerCase();
-    return Object.values(r).some((val) =>
-      String(val ?? '').toLowerCase().includes(term)
-    );
-  });
-
-  const sortedRows = [...filteredRows].sort((a, b) => {
-    if (!sortCol) return 0;
-    const valA = a[sortCol];
-    const valB = b[sortCol];
-    if (valA === valB) return 0;
-    if (valA === null || valA === undefined) return 1;
-    if (valB === null || valB === undefined) return -1;
-    const cmp = valA > valB ? 1 : -1;
-    return sortAsc ? cmp : -cmp;
-  });
 
   const totalPages = Math.ceil(sortedRows.length / pageSize) || 1;
   const paginatedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
@@ -133,6 +190,31 @@ export const DataGrid = ({
     }
   };
 
+  const handleExportSqlDump = () => {
+    if (!tableName) return;
+    const dumpContent = tauriBridge.generateSqlDump(
+      engine,
+      tableName,
+      ddl || `CREATE TABLE \`${tableName}\` (/* schema unavailable */);`,
+      columns,
+      sortedRows
+    );
+    const blob = new Blob([dumpContent], { type: 'text/sql' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = generateExportFileName(tableName, 'sql');
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleQuickFilter = (colName: string, cellVal: any, isEquals: boolean) => {
+    const valStr = cellVal === null || cellVal === undefined ? 'NULL' : String(cellVal);
+    const clause = isEquals ? `${colName} = '${valStr}'` : `${colName} != '${valStr}'`;
+    setSqlWhere(clause);
+    setPage(1);
+  };
+
   const openCellContextMenu = (
     e: React.MouseEvent,
     row: Record<string, any>,
@@ -155,6 +237,16 @@ export const DataGrid = ({
                 cellVal === null || cellVal === undefined ? '' : String(cellVal)
               );
             },
+          },
+          {
+            label: `Filter by "${String(cellVal).slice(0, 15)}"`,
+            icon: <Filter className="w-3.5 h-3.5 text-indigo-400" />,
+            onClick: () => handleQuickFilter(colName, cellVal, true),
+          },
+          {
+            label: `Filter excluding this`,
+            icon: <Filter className="w-3.5 h-3.5 text-rose-400" />,
+            onClick: () => handleQuickFilter(colName, cellVal, false),
           },
           ...(onUpdateCell && !columns.find((c) => c.name === colName)?.is_primary_key
             ? [
@@ -194,6 +286,14 @@ export const DataGrid = ({
               navigator.clipboard.writeText(JSON.stringify(row, null, 2));
             },
           },
+          {
+            label: 'Copy Row as SQL INSERT',
+            icon: <FileCode2 className="w-3.5 h-3.5 text-purple-400" />,
+            onClick: () => {
+              const sql = tauriBridge.generateInsertRowSql(engine, tableName || 'table', row);
+              navigator.clipboard.writeText(sql);
+            },
+          },
           ...(onOpenInsertRow
             ? [
                 {
@@ -216,7 +316,7 @@ export const DataGrid = ({
         ],
       },
       {
-        header: 'Data Export',
+        header: 'Export Options',
         items: [
           {
             label: 'Export to CSV',
@@ -228,45 +328,105 @@ export const DataGrid = ({
             icon: <FileJson className="w-3.5 h-3.5 text-amber-400" />,
             onClick: () => handleExport('json'),
           },
+          ...(tableName
+            ? [
+                {
+                  label: 'Export as SQL Dump (.sql)',
+                  icon: <Database className="w-3.5 h-3.5 text-indigo-400" />,
+                  onClick: handleExportSqlDump,
+                },
+              ]
+            : []),
         ],
       },
     ];
 
-    setContextMenu({ x: e.clientX, y: e.clientY, sections });
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      sections,
+    });
   };
 
+  const handleCellCommit = async (row: Record<string, any>, colName: string) => {
+    if (!editingCell || !onUpdateCell) return;
+    try {
+      await onUpdateCell(row, colName, editingCell.value);
+    } catch (err: any) {
+      alert(`Update failed: ${err.message || err}`);
+    } finally {
+      setEditingCell(null);
+    }
+  };
+
+  const pkCol = columns.find((c) => c.is_primary_key)?.name;
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden">
-      <div className="h-10 border-b border-slate-800/80 px-4 flex items-center justify-between bg-slate-900/40 shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500" />
+    <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden relative">
+      {/* Interactive Toolbar & SQL Filter Bar */}
+      <div className="h-10 border-b border-slate-800/80 px-4 flex items-center justify-between bg-slate-900/60 shrink-0 select-none">
+        <div className="flex items-center space-x-2">
+          {/* SQL WHERE Filter Bar */}
+          <div className="flex items-center bg-slate-950 border border-slate-800 rounded-md px-2 py-0.5 space-x-1.5 focus-within:border-indigo-500 transition">
+            <span className="text-[11px] font-mono font-semibold text-indigo-400">WHERE</span>
             <input
               type="text"
-              placeholder="Filter in results..."
+              placeholder="e.g. status = 'active'"
+              value={sqlWhere}
+              onChange={(e) => {
+                setSqlWhere(e.target.value);
+                setPage(1);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && onApplySqlFilter && sqlWhere.trim()) {
+                  onApplySqlFilter(sqlWhere.trim());
+                }
+              }}
+              className="bg-transparent text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-hidden w-44"
+            />
+            {sqlWhere && (
+              <button
+                onClick={() => {
+                  setSqlWhere('');
+                  setPage(1);
+                }}
+                title="Clear Filter"
+                className="text-slate-500 hover:text-slate-300"
+              >
+                <RotateCcw className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Quick Search */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Search in view..."
               value={filterText}
               onChange={(e) => {
                 setFilterText(e.target.value);
                 setPage(1);
               }}
-              className="bg-slate-950 border border-slate-800 rounded-md pl-8 pr-2 py-1 text-xs text-slate-200 focus:outline-hidden focus:border-indigo-500 w-44"
+              className="bg-slate-950 border border-slate-800 rounded-md pl-8 pr-3 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-hidden focus:border-indigo-500 w-36 transition"
             />
           </div>
 
-          <span className="text-[11px] text-slate-400 font-mono">
-            Showing {paginatedRows.length} of {sortedRows.length} rows
+          <span className="text-xs text-slate-500 font-mono">
+            {sortedRows.length} of {rows.length} rows
           </span>
         </div>
 
-        <div className="flex items-center space-x-1.5">
+        <div className="flex items-center space-x-2">
           {onOpenInsertRow && (
             <button
               onClick={onOpenInsertRow}
-              title="Insert New Row into table"
-              className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-md transition shadow-xs cursor-pointer mr-1"
+              title="Insert Record"
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium flex items-center space-x-1 transition shadow-xs cursor-pointer"
             >
               <PlusCircle className="w-3.5 h-3.5" />
-              <span>Insert Row</span>
+              <span>Insert</span>
             </button>
           )}
 
@@ -286,6 +446,16 @@ export const DataGrid = ({
             <FileJson className="w-3.5 h-3.5 text-amber-400" />
             <span>JSON</span>
           </button>
+          {tableName && (
+            <button
+              onClick={handleExportSqlDump}
+              title="Export Table as SQL Dump Script"
+              className="flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-800/60 rounded-md transition cursor-pointer"
+            >
+              <Database className="w-3.5 h-3.5 text-indigo-400" />
+              <span>SQL Dump</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -296,32 +466,47 @@ export const DataGrid = ({
               <th className="w-12 px-3 py-2 text-center text-slate-500 font-normal border-r border-slate-800/80">
                 #
               </th>
-              {columns.map((col) => (
-                <th
-                  key={col.name}
-                  onClick={() => handleSort(col.name)}
-                  className="px-3.5 py-2 font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer border-r border-slate-800/80 transition"
-                >
-                  <div className="flex items-center justify-between space-x-2">
-                    <div className="flex items-center space-x-1.5">
-                      <span className={col.is_primary_key ? 'text-amber-400 font-bold' : ''}>
-                        {col.name}
-                      </span>
-                      {col.is_primary_key && (
-                        <span className="text-[9px] bg-amber-950 text-amber-400 px-1 py-0.2 rounded border border-amber-900/60 font-sans">
-                          PK
+              {columns.map((col) => {
+                const isSorted = sortCol === col.name;
+                return (
+                  <th
+                    key={col.name}
+                    onClick={() => handleSort(col.name)}
+                    className={`px-3.5 py-2 font-medium cursor-pointer border-r border-slate-800/80 transition ${
+                      isSorted
+                        ? 'bg-indigo-950/40 text-indigo-200'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between space-x-2">
+                      <div className="flex items-center space-x-1.5">
+                        <span className={col.is_primary_key ? 'text-amber-400 font-bold' : ''}>
+                          {col.name}
                         </span>
-                      )}
+                        {col.is_primary_key && (
+                          <span className="text-[9px] bg-amber-950 text-amber-400 px-1 py-0.2 rounded border border-amber-900/60 font-sans">
+                            PK
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <span className="text-[10px] text-slate-500 font-normal lowercase">
+                          {col.data_type}
+                        </span>
+                        {isSorted ? (
+                          sortAsc ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-indigo-400" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-indigo-400" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-600" />
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center space-x-1 text-slate-500">
-                      <span className="text-[10px] text-slate-500 font-normal lowercase">
-                        {col.data_type}
-                      </span>
-                      <ArrowUpDown className="w-3 h-3 text-slate-600" />
-                    </div>
-                  </div>
-                </th>
-              ))}
+                  </th>
+                );
+              })}
               {onDeleteRow && (
                 <th className="w-12 px-2 py-2 text-center text-slate-500 font-normal border-r border-slate-800/80">
                   Act
@@ -337,7 +522,7 @@ export const DataGrid = ({
                   className="py-12 text-center text-slate-500"
                 >
                   <div className="flex flex-col items-center justify-center space-y-2">
-                    <p className="text-xs text-slate-400">No records found in this table</p>
+                    <p className="text-xs text-slate-400">No records found matching filters</p>
                     {onOpenInsertRow && (
                       <button
                         onClick={onOpenInsertRow}
@@ -353,20 +538,23 @@ export const DataGrid = ({
             ) : (
               paginatedRows.map((row, rowIdx) => {
                 const actualRowIndex = (page - 1) * pageSize + rowIdx + 1;
+                const rowKey = pkCol && row[pkCol] !== undefined ? String(row[pkCol]) : String(actualRowIndex);
+
                 return (
                   <tr
-                    key={rowIdx}
+                    key={rowKey}
                     className="hover:bg-slate-900/70 transition group"
                   >
-                    <td className="px-3 py-1.5 text-center text-slate-600 text-[11px] border-r border-slate-800/60 select-none">
+                    <td className="px-3 py-1.5 text-center text-slate-600 border-r border-slate-800/60 select-none text-[11px]">
                       {actualRowIndex}
                     </td>
+
                     {columns.map((col) => {
                       const cellVal = row[col.name];
-                      const isNull = cellVal === null || cellVal === undefined;
-                      const isObj = typeof cellVal === 'object' && !isNull;
                       const isEditing =
-                        editingCell?.rowIdx === rowIdx && editingCell?.colName === col.name;
+                        editingCell &&
+                        editingCell.rowIdx === rowIdx &&
+                        editingCell.colName === col.name;
 
                       return (
                         <td
@@ -384,27 +572,11 @@ export const DataGrid = ({
                                     ? ''
                                     : String(cellVal),
                               });
-                            } else {
-                              setInspectorCell({
-                                title: `${col.name} (Row #${actualRowIndex})`,
-                                value: cellVal,
-                              });
                             }
                           }}
-                          onClick={() => {
-                            if (!isEditing) {
-                              setInspectorCell({
-                                title: `${col.name} (Row #${actualRowIndex})`,
-                                value: cellVal,
-                              });
-                            }
-                          }}
-                          className="px-3.5 py-1.5 border-r border-slate-800/60 text-slate-300 max-w-xs truncate cursor-pointer hover:bg-indigo-950/20"
-                          title={
-                            onUpdateCell && !col.is_primary_key
-                              ? 'Double click to edit cell inline'
-                              : 'Click to inspect full cell value'
-                          }
+                          className={`px-3.5 py-1.5 border-r border-slate-800/60 truncate max-w-xs transition ${
+                            col.is_primary_key ? 'text-amber-300 font-semibold' : 'text-slate-300'
+                          }`}
                         >
                           {isEditing ? (
                             <input
@@ -416,36 +588,36 @@ export const DataGrid = ({
                                   prev ? { ...prev, value: e.target.value } : null
                                 )
                               }
+                              onBlur={() => handleCellCommit(row, col.name)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  e.currentTarget.blur();
+                                  handleCellCommit(row, col.name);
                                 } else if (e.key === 'Escape') {
                                   setEditingCell(null);
                                 }
                               }}
-                              onBlur={async () => {
-                                if (editingCell) {
-                                  const newVal = editingCell.value;
-                                  setEditingCell(null);
-                                  if (String(cellVal ?? '') !== newVal) {
-                                    await onUpdateCell?.(row, col.name, newVal);
-                                  }
-                                }
-                              }}
-                              className="w-full bg-slate-900 border border-indigo-500 rounded px-1.5 py-0.5 text-xs text-white font-mono focus:outline-hidden"
+                              className="w-full bg-slate-950 border border-indigo-500 rounded px-1.5 py-0.5 text-xs text-white focus:outline-hidden"
                             />
-                          ) : isNull ? (
-                            <span className="text-slate-600 italic text-[11px]">NULL</span>
-                          ) : isObj ? (
-                            <span className="text-amber-400 font-medium bg-amber-950/40 px-1.5 py-0.5 rounded text-[10px] border border-amber-900/50">
-                              {Array.isArray(cellVal) ? `Array(${cellVal.length})` : 'JSON Object'}
+                          ) : cellVal === null || cellVal === undefined ? (
+                            <span className="text-slate-600 italic select-none">NULL</span>
+                          ) : typeof cellVal === 'object' ? (
+                            <span
+                              className="text-indigo-400 truncate block hover:underline cursor-pointer"
+                              onClick={() =>
+                                setInspectorCell({
+                                  title: `${col.name} (JSON)`,
+                                  value: cellVal,
+                                })
+                              }
+                            >
+                              {JSON.stringify(cellVal)}
                             </span>
                           ) : typeof cellVal === 'boolean' ? (
                             <span
-                              className={`px-1 py-0.5 rounded text-[10px] font-semibold ${
+                              className={`px-1.5 py-0.2 rounded text-[10px] font-sans font-semibold ${
                                 cellVal
                                   ? 'bg-emerald-950 text-emerald-400'
-                                  : 'bg-rose-950 text-rose-400'
+                                  : 'bg-slate-800 text-slate-400'
                               }`}
                             >
                               {cellVal ? 'TRUE' : 'FALSE'}
@@ -490,6 +662,7 @@ export const DataGrid = ({
             <option value={50}>50</option>
             <option value={100}>100</option>
             <option value={200}>200</option>
+            <option value={500}>500</option>
           </select>
         </div>
 
